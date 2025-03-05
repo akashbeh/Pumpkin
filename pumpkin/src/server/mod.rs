@@ -94,17 +94,26 @@ impl Server {
         // First register default command, after that plugins can put in their own
         let command_dispatcher = RwLock::new(default_dispatcher());
 
-        let world = World::load(
+        let overworld = World::load(
             Dimension::OverWorld.into_level(
                 // TODO: load form config
-                "./world".parse().unwrap(),
+                "./world/overworld".parse().unwrap(),
             ),
             DimensionType::Overworld,
         );
 
+        let the_end = World::load(
+            Dimension::TheEnd.into_level(
+                // TODO: load form config
+                "./world/end".parse().unwrap(),
+            ),
+            DimensionType::TheEnd,
+        );
+
         // Spawn chunks are never unloaded
         for chunk in Self::spawn_chunks() {
-            world.level.mark_chunk_as_newly_watched(chunk);
+            overworld.level.mark_chunk_as_newly_watched(chunk);
+            the_end.level.mark_chunk_as_newly_watched(chunk);
         }
 
         Self {
@@ -112,7 +121,8 @@ impl Server {
             open_containers: RwLock::new(HashMap::new()),
             drag_handler: DragHandler::new(),
             container_id: 0.into(),
-            worlds: RwLock::new(vec![Arc::new(world)]),
+            // put TheEnd first because [0] is selected as default world
+            worlds: RwLock::new(vec![Arc::new(overworld), Arc::new(the_end)]),
             dimensions: vec![
                 DimensionType::Overworld,
                 DimensionType::OverworldCaves,
@@ -171,9 +181,17 @@ impl Server {
         let gamemode = self.defaultgamemode.lock().await.gamemode;
         // Basically the default world
         // TODO: select default from config
-        let world = &self.worlds.read().await[0];
+        let worlds = &self.worlds.read().await;
 
         let player = Arc::new(Player::new(client, world.clone(), gamemode).await);
+        let properties = player.gameprofile.properties.read().await;
+        // property 1 refers to where players should spawn
+        // it can be either "0" (world) or "1" (lobby)
+        let spawn_world = properties.filter(|p| p.name == "1")[0];
+        let world = match spawn_world.value {
+            "0" => worlds[0],
+            _ => worlds[1],
+        };
         world
             .add_player(player.gameprofile.id, player.clone())
             .await;
