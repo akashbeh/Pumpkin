@@ -193,12 +193,10 @@ impl LivingEntity {
             if fall_distance <= 0.0 || dont_damage {
                 return;
             }
-            println!("Fell {fall_distance}");
 
             let safe_fall_distance = 3.0;
             let mut damage = fall_distance - safe_fall_distance;
             damage = (damage).ceil();
-            println!("Damaged {damage}");
 
             // TODO: Play block fall sound
             let check_damage = self.damage(damage, DamageType::FALL).await; // Fall
