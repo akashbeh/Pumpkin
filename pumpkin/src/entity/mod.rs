@@ -61,6 +61,116 @@ pub trait EntityBase: Send + Sync {
             self.get_entity().tick(server).await;
         }
     }
+    
+    async fn handle_physics(
+        &self,
+        // Default: 0.42
+        jump_velo: Option<f64>,
+        
+        // Default: 0.08
+        //gravity: f64,
+        // Default: 0.02
+        fall_drag: f64, // TODO handle drag before too
+        terminal_velocity: f64,
+        
+        
+    ) {
+        let living_entity = self.get_living_entity();
+        let entity = self.get_entity();
+        let world = entity.world.read().await;
+        let block_pos = entity.block_pos.load();
+        let mut pos = entity.pos.load();
+        let mut velo = entity.velocity.load();
+        
+        // Check for out of world
+        if block_pos.y > 319 || block_pos.y < -64 {
+            velo.y -= 0.08; // default gravity
+            entity.set_velocity(velo).await;
+            
+            let new_pos = pos.add(velo);
+            if let Some(living) = living_entity {
+                living.set_pos(new_pos);
+            } else {
+                entity.set_pos(new_pos);
+            }
+            return;
+        }
+        
+        
+        // Check for suffocation and falling
+        let Some(in_block) = world.get_block_state(block_pos) else {
+            log::error!("Block not found at {}", block_pos);
+            return;
+        };
+        
+        let block_below_pos = block_pos.down();
+        /*
+        let Some(block_below) = world.get_block_state(block_below_pos) else {
+            log::error!("Block below not found at {}", block_below_pos);
+            return;
+        };
+        */
+        let block_below = world.get_block_state(block_below_pos);
+        
+        if in_block.is_solid {
+            let dest = self.on_suffocation(in_block).await;
+            
+            if let Some(dest) = destination {
+                pos = pos.add(dest * 0.1);
+            } else {
+                pos.y += 0.5;
+            }
+            
+            entity.on_ground.store(true);
+        } else {
+            if let Some(block) = block_below {
+                if !block.is_solid {
+                    entity.on_ground.store(false);
+                }
+            }
+        }
+        
+        if entity.on_ground.load() {
+            if in_block.is_liquid {
+                y_acc = 
+            }
+        } else {
+        }
+        
+        velo.y -= fall_acceleration;
+        // Apply 
+    }
+    
+    // returns nearest non-solid block
+    async fn on_suffocation(&self, inside_block: BlockState) -> Option<Vector3<i32>> {
+        
+        /*
+        // Move to livingEntity impl EntityBase
+        // Suffocate
+        if let Some(living) = self.get_living_entity() {
+            living.damage(1.0, DamageType::IN_WALL).await;
+        }
+        */
+        
+        /*
+        // Player impl EntityBase: send zero velocity
+        */
+        
+        // Push out of block
+        let mut destination = None;
+        'surrounding: for x in -1..=1 {
+            for z in -1..=1 {
+                let offset = Vector3::new(x, 0, z);
+                let neighbor_pos = block.offset(offset);
+                if let Some(neighbor) = world.get_block_state(neighbor_pos).await {
+                    if !neighbor.is_solid {
+                        destination = Some(offset);
+                        break 'surrounding;
+                    }
+                }
+            }
+        }
+    }
 
     /// Returns if damage was successful or not
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {
