@@ -151,16 +151,17 @@ impl ToTokens for ItemComponents {
             }
             None => quote! { None },
         };
-        
+
         let food = match &self.food {
             Some(food) => {
                 let nutrition = LitInt::new(&food.nutrition.to_string(), Span::call_site());
-                let saturation = LitFloat::new(&format!("{:.1}", food.saturation), Span::call_site());
+                let saturation =
+                    LitFloat::new(&format!("{:.1}", food.saturation), Span::call_site());
                 let can_always_eat = match food.can_always_eat {
                     Some(can) => {
                         let can = LitBool::new(can, Span::call_site());
                         quote! { Some(#can) }
-                    },
+                    }
                     None => quote! { None },
                 };
                 quote! { Some(FoodComponent {
@@ -168,8 +169,7 @@ impl ToTokens for ItemComponents {
                     saturation: #saturation,
                     can_always_eat: #can_always_eat,
                 } ) }
-                
-            },
+            }
             None => quote! { None },
         };
 
@@ -323,7 +323,7 @@ pub(crate) fn build() -> TokenStream {
             pub speed: Option<f32>,
             pub correct_for_drops: Option<bool>,
         }
-        
+
         #[derive(Clone, Copy, Debug, PartialEq)]
         pub struct FoodComponent {
             pub nutrition: u8,
