@@ -11,6 +11,7 @@ use pumpkin_macros::pumpkin_block;
 use pumpkin_protocol::server::play::SUseItemOn;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_world::{
+    BlockStateId,
     block::{BlockDirection, HorizontalFacingExt},
     chunk::TickPriority,
 };
@@ -39,13 +40,17 @@ impl PumpkinBlock for RepeaterBlock {
         _face: &BlockDirection,
         block_pos: &BlockPos,
         _use_item_on: &SUseItemOn,
-        player_direction: &HorizontalFacing,
+        player: &Player,
         _other: bool,
-    ) -> u16 {
+    ) -> BlockStateId {
         let mut props = RepeaterProperties::default(block);
-        props.facing = player_direction.opposite();
-        props.locked =
-            Boolean::from_bool(should_be_locked(player_direction, world, block_pos).await);
+        let dir = player
+            .living_entity
+            .entity
+            .get_horizontal_facing()
+            .opposite();
+        props.facing = dir;
+        props.locked = Boolean::from_bool(should_be_locked(&dir, world, block_pos).await);
         props.to_state_id(block)
     }
 

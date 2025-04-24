@@ -4,7 +4,7 @@ use std::{
     ops::AddAssign,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU8, AtomicU32, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -48,15 +48,17 @@ use pumpkin_inventory::player::{
 use pumpkin_macros::send_cancellable;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
-use pumpkin_protocol::client::play::{CSetHeldItem, PlayerInfoFlags, PreviousMessage};
+use pumpkin_protocol::client::play::{
+    CSetHeldItem, CTeleportEntity, PlayerInfoFlags, PreviousMessage,
+};
 use pumpkin_protocol::{
     IdOr, RawPacket, ServerPacket,
     client::play::{
         CAcknowledgeBlockChange, CActionBar, CChunkBatchEnd, CChunkBatchStart, CChunkData,
         CCombatDeath, CDisguisedChatMessage, CGameEvent, CKeepAlive, CParticle, CPlayDisconnect,
         CPlayerAbilities, CPlayerInfoUpdate, CPlayerPosition, CRespawn, CSetExperience, CSetHealth,
-        CStopSound, CSubtitle, CSystemChatMessage, CTeleportEntity, CTitleText, CUnloadChunk,
-        CUpdateMobEffect, GameEvent, MetaDataType, PlayerAction,
+        CStopSound, CSubtitle, CSystemChatMessage, CTitleText, CUnloadChunk, CUpdateMobEffect,
+        GameEvent, MetaDataType, PlayerAction,
     },
     codec::identifier::Identifier,
     ser::packet::Packet,
@@ -183,6 +185,8 @@ pub struct Player {
     pub config: Mutex<PlayerConfig>,
     /// The player's current gamemode (e.g., Survival, Creative, Adventure).
     pub gamemode: AtomicCell<GameMode>,
+    /// The player's previous gamemode
+    pub previous_gamemode: AtomicCell<Option<GameMode>>,
     /// Manages the player's hunger level.
     pub hunger_manager: HungerManager,
     /// The ID of the currently open container (if any).
@@ -220,7 +224,7 @@ pub struct Player {
     /// The player's last known experience level.
     pub last_sent_xp: AtomicI32,
     pub last_sent_health: AtomicI32,
-    pub last_sent_food: AtomicU32,
+    pub last_sent_food: AtomicU8,
     pub last_food_saturation: AtomicBool,
     /// The player's permission level.
     pub permission_lvl: AtomicCell<PermissionLvl>,
@@ -286,6 +290,7 @@ impl Player {
             mining_pos: Mutex::new(BlockPos(Vector3::new(0, 0, 0))),
             abilities: Mutex::new(Abilities::default()),
             gamemode: AtomicCell::new(gamemode),
+            previous_gamemode: AtomicCell::new(None),
             // We want this to be an impossible watched section so that `player_chunker::update_position`
             // will mark chunks as watched for a new join rather than a respawn.
             // (We left shift by one so we can search around that chunk)
@@ -319,7 +324,7 @@ impl Player {
             chunk_manager: Mutex::new(ChunkManager::new(16)),
             last_sent_xp: AtomicI32::new(-1),
             last_sent_health: AtomicI32::new(-1),
-            last_sent_food: AtomicU32::new(0),
+            last_sent_food: AtomicU8::new(0),
             last_food_saturation: AtomicBool::new(true),
             has_played_before: AtomicBool::new(false),
             chat_session: Arc::new(Mutex::new(ChatSession::default())), // Placeholder value until the player actually sets their session id
@@ -493,7 +498,7 @@ impl Player {
         offset: Vector3<f32>,
         max_speed: f32,
         particle_count: i32,
-        pariticle: Particle,
+        particle: Particle,
     ) {
         self.client
             .enqueue_packet(&CParticle::new(
@@ -503,7 +508,7 @@ impl Player {
                 offset,
                 max_speed,
                 particle_count,
-                VarInt(pariticle as i32),
+                VarInt(particle as i32),
                 &[],
             ))
             .await;
@@ -520,7 +525,7 @@ impl Player {
     ) {
         self.client
             .enqueue_packet(&CSoundEffect::new(
-                IdOr::Id(u32::from(sound_id)),
+                IdOr::Id(sound_id),
                 category,
                 position,
                 volume,
@@ -581,7 +586,7 @@ impl Player {
                 self.client.send_packet_now(&CChunkData(&chunk)).await;
             }
             self.client
-                .send_packet_now(&CChunkBatchEnd::new(chunk_count))
+                .send_packet_now(&CChunkBatchEnd::new(chunk_count as u16))
                 .await;
         }
 
@@ -951,30 +956,23 @@ impl Player {
                 to: position,
                 cancelled: false,
             };
-
             'after: {
                 let position = event.to;
-                self.living_entity
-                    .entity
+                let entity = self.get_entity();
+                self.request_teleport(position, yaw, pitch).await;
+                entity
                     .world
                     .read()
                     .await
-                    .broadcast_packet_all(&CTeleportEntity::new(
+                    .broadcast_packet_except(&[self.gameprofile.id], &CTeleportEntity::new(
                         self.living_entity.entity.entity_id.into(),
                         position,
                         Vector3::new(0.0, 0.0, 0.0),
                         yaw,
                         pitch,
-                        // TODO
-                        &[],
-                        self.living_entity
-                            .entity
-                            .on_ground
-                            .load(std::sync::atomic::Ordering::SeqCst),
+                        entity.on_ground.load(Ordering::SeqCst),
                     ))
                     .await;
-                self.living_entity.entity.set_pos(position);
-                self.living_entity.entity.set_rotation(yaw, pitch);
             }
         }}
     }
@@ -1120,6 +1118,9 @@ impl Player {
             'after: {
                 let gamemode = event.new_gamemode;
                 self.gamemode.store(gamemode);
+                // TODO: Fix this when mojang fixes it
+                // This is intentional to keep the pure vanilla mojang experience
+                // self.previous_gamemode.store(self.previous_gamemode.load());
                 {
                     // Use another scope so that we instantly unlock `abilities`.
                     let mut abilities = self.abilities.lock().await;
@@ -1232,7 +1233,7 @@ impl Player {
     pub async fn send_message(
         &self,
         message: &TextComponent,
-        chat_type: u32,
+        chat_type: u8,
         sender_name: &TextComponent,
         target_name: Option<&TextComponent>,
     ) {
@@ -1426,6 +1427,9 @@ impl NBTStorage for Player {
             + self.experience_points.load(Ordering::Relaxed);
         nbt.put_int("XpTotal", total_exp);
         nbt.put_byte("playerGameType", self.gamemode.load() as i8);
+        if let Some(previous_gamemode) = self.previous_gamemode.load() {
+            nbt.put_byte("previousPlayerGameType", previous_gamemode as i8);
+        }
 
         nbt.put_bool(
             "HasPlayedBefore",
@@ -1444,6 +1448,11 @@ impl NBTStorage for Player {
         self.gamemode.store(
             GameMode::try_from(nbt.get_byte("playerGameType").unwrap_or(0))
                 .unwrap_or(GameMode::Survival),
+        );
+
+        self.previous_gamemode.store(
+            nbt.get_byte("previousPlayerGameType")
+                .and_then(|byte| GameMode::try_from(byte).ok()),
         );
 
         self.has_played_before.store(

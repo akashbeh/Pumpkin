@@ -7,7 +7,7 @@ use pumpkin_data::{
     fluid::{EnumVariants, Falling, Fluid, FluidProperties, Level},
 };
 use pumpkin_util::math::position::BlockPos;
-use pumpkin_world::block::BlockDirection;
+use pumpkin_world::{BlockId, BlockStateId, block::BlockDirection};
 
 use crate::world::{BlockFlags, World};
 type FlowingFluidProperties = pumpkin_data::fluid::FlowingWaterLikeFluidProperties;
@@ -23,8 +23,7 @@ impl SpreadContext {
             holes: HashMap::new(),
         }
     }
-
-    pub async fn is_hole<T: FlowingFluid + ?Sized + std::marker::Sync>(
+    pub async fn is_hole<T: FlowingFluid + ?Sized + Sync>(
         &mut self,
         fluid: &T,
         world: &Arc<World>,
@@ -80,7 +79,7 @@ pub trait FlowingFluid {
 
     async fn can_convert_to_source(&self, world: &Arc<World>) -> bool;
 
-    fn is_same_fluid(&self, fluid: &Fluid, other_state_id: u16) -> bool {
+    fn is_same_fluid(&self, fluid: &Fluid, other_state_id: BlockStateId) -> bool {
         if let Some(other_fluid) = Fluid::from_state_id(other_state_id) {
             return fluid.id == other_fluid.id;
         }
@@ -221,7 +220,7 @@ pub trait FlowingFluid {
         &self,
         world: &Arc<World>,
         block_pos: &BlockPos,
-        state_id: u16,
+        state_id: BlockStateId,
         fluid: &Fluid,
     ) -> bool {
         let Ok(block) = world.get_block(block_pos).await else {
@@ -313,12 +312,12 @@ pub trait FlowingFluid {
             };
 
             if slope_dist < min_dist {
-                min_dist = slope_dist;
                 result.clear();
             }
 
             if slope_dist <= min_dist {
                 result.insert(direction, slope_dist);
+                min_dist = slope_dist;
             }
         }
         result
@@ -334,7 +333,7 @@ pub trait FlowingFluid {
         ctx: &mut SpreadContext,
     ) -> i32 {
         if distance > self.get_slope_find_distance().await {
-            return distance;
+            return 1000;
         }
 
         let mut min_dist = 1000;
@@ -348,6 +347,17 @@ pub trait FlowingFluid {
 
             if !self.can_pass_through(world, fluid, &next_pos).await {
                 continue;
+            }
+
+            let Ok(next_state_id) = world.get_block_state_id(&next_pos).await else {
+                continue;
+            };
+
+            if self.is_same_fluid(fluid, next_state_id) {
+                let next_props = FlowingFluidProperties::from_state_id(next_state_id, fluid);
+                if next_props.level == Level::L8 && next_props.falling == Falling::False {
+                    return 1000;
+                }
             }
 
             if ctx.is_hole(self, world, fluid, &next_pos).await {
@@ -370,7 +380,13 @@ pub trait FlowingFluid {
         min_dist
     }
 
-    async fn spread_to(&self, world: &Arc<World>, _fluid: &Fluid, pos: &BlockPos, state_id: u16) {
+    async fn spread_to(
+        &self,
+        world: &Arc<World>,
+        _fluid: &Fluid,
+        pos: &BlockPos,
+        state_id: BlockStateId,
+    ) {
         //TODO Implement lava water mix
 
         world
@@ -402,7 +418,7 @@ pub trait FlowingFluid {
         false
     }
 
-    async fn can_be_replaced(&self, world: &Arc<World>, pos: &BlockPos, block_id: u16) -> bool {
+    async fn can_be_replaced(&self, world: &Arc<World>, pos: &BlockPos, block_id: BlockId) -> bool {
         let Ok(block_state_id) = world.get_block_state_id(pos).await else {
             return false;
         };

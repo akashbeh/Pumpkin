@@ -4,13 +4,11 @@ use crate::entity::player::Player;
 use crate::world::BlockFlags;
 use async_trait::async_trait;
 use pumpkin_data::block::{Block, BlockFace, BlockState, LeverLikeProperties};
-use pumpkin_data::{
-    block::{BlockProperties, HorizontalFacing},
-    item::Item,
-};
+use pumpkin_data::{block::BlockProperties, item::Item};
 use pumpkin_macros::pumpkin_block;
 use pumpkin_protocol::server::play::SUseItemOn;
 use pumpkin_util::math::position::BlockPos;
+use pumpkin_world::BlockStateId;
 use pumpkin_world::block::{BlockDirection, HorizontalFacingExt};
 
 use crate::{
@@ -48,9 +46,9 @@ impl PumpkinBlock for LeverBlock {
         face: &BlockDirection,
         _block_pos: &BlockPos,
         _use_item_on: &SUseItemOn,
-        player_direction: &HorizontalFacing,
+        player: &Player,
         _other: bool,
-    ) -> u16 {
+    ) -> BlockStateId {
         let mut lever_props = LeverLikeProperties::from_state_id(block.default_state_id, block);
 
         match face {
@@ -60,7 +58,7 @@ impl PumpkinBlock for LeverBlock {
         }
 
         if face == &BlockDirection::Up || face == &BlockDirection::Down {
-            lever_props.facing = *player_direction;
+            lever_props.facing = player.living_entity.entity.get_horizontal_facing();
         } else {
             lever_props.facing = face.opposite().to_cardinal_direction();
         }
@@ -134,7 +132,7 @@ impl PumpkinBlock for LeverBlock {
         world: &Arc<World>,
         block: &Block,
         location: BlockPos,
-        old_state_id: u16,
+        old_state_id: BlockStateId,
         moved: bool,
     ) {
         if !moved {

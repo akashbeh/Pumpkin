@@ -959,7 +959,7 @@ pub(crate) fn build() -> TokenStream {
                 property_enum: renamed_property.clone(),
             });
 
-            // If this property doesnt have an `enum` yet, make one.
+            // If this property doesn't have an `enum` yet, make one.
             let _ = property_enums
                 .entry(renamed_property.clone())
                 .or_insert_with(|| PropertyStruct {
@@ -1280,6 +1280,19 @@ pub(crate) fn build() -> TokenStream {
                     HorizontalFacing::South => HorizontalFacing::North,
                     HorizontalFacing::East => HorizontalFacing::West,
                     HorizontalFacing::West => HorizontalFacing::East
+                }
+            }
+        }
+
+        impl Facing {
+            pub fn opposite(&self) -> Self {
+                match self {
+                    Facing::North => Facing::South,
+                    Facing::South => Facing::North,
+                    Facing::East => Facing::West,
+                    Facing::West => Facing::East,
+                    Facing::Up => Facing::Down,
+                    Facing::Down => Facing::Up,
                 }
             }
         }
