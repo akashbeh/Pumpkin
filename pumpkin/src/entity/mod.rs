@@ -1067,6 +1067,8 @@ impl Entity {
         // TODO Add tripwires, really anything the player intersects with
     }
 
+    // Faulty
+    /*
     async fn push_out_of_blocks(&self, world: &World) -> Result<Option<Vector3<f64>>, GetBlockError> {
         let block_pos = self.block_pos.load();
         
@@ -1112,6 +1114,7 @@ impl Entity {
         }
         Ok(movement)
     }
+    */
 
     /// Applies knockback to the entity, following vanilla Minecraft's mechanics.
     ///
