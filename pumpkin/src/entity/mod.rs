@@ -117,7 +117,7 @@ pub trait EntityBase: Send + Sync {
     async fn handle_physics(
         &self,
         gravity: f64,
-        server: f64,
+        server: &Server,
     ) -> Result<(), GetBlockError> {
         let entity = self.get_entity();
         let living = self.get_living_entity();
@@ -137,10 +137,11 @@ pub trait EntityBase: Send + Sync {
         let mut velo = entity.velocity.load();
         velo.y -= gravity;
         
+        Entity::check_block_collision(entity, server).await;
+        
+        /*
         let bounding_box = entity.bounding_box.load();
         
-        Entity::check_block_collision(entity, server).await;
-        /*
         let mut in_cobweb = false;
         let mut in_water = false;
         let mut in_lava = false;
@@ -315,7 +316,7 @@ pub trait EntityBase: Send + Sync {
             ).await;
         }
         
-        entity.look_at(entity.velocity.load());
+        entity.look_at(entity.velocity.load()).await;
         if let Some(live) = living {
         	live.send_pos_rot().await;
         }

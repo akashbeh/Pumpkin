@@ -308,7 +308,7 @@ impl LivingEntity {
         }
     }
     
-    async fn base_tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
+    async fn base_tick(&self, _caller: Arc<dyn EntityBase>, _server: &Server) {
         //self.entity.tick(caller.clone(), server).await;
         //self.tick_move(caller.as_ref(), server).await;
         self.tick_effects().await;
@@ -347,7 +347,7 @@ impl EntityBase for LivingEntity {
         };
         
         self.tick_move(self.entity.velocity.load()).await;
-        self.base_tick(Arc::clone(&caller), server);
+        self.base_tick(Arc::clone(&caller), server).await;
     }
     
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {
