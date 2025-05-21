@@ -316,9 +316,11 @@ pub trait EntityBase: Send + Sync {
             ).await;
         }
         
-        entity.look_at(entity.velocity.load()).await;
+        //entity.look_at(entity.velocity.load()).await;
         if let Some(live) = living {
         	live.send_pos_rot().await;
+        } else {
+        	entity.send_pos_rot().await;
         }
         entity.send_velocity().await;
         
