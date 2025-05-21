@@ -95,6 +95,22 @@ impl LivingEntity {
         self.last_pos.store(self.entity.pos.load());
         self.entity.set_pos(position);
     }
+    
+    pub async fn send_pos(&self) {
+        let old_pos = self.last_pos.load();
+        let pos = self.entity.pos.load();
+        self.last_pos.store(pos);
+        
+        self.entity.send_pos(pos, old_pos).await;
+    }
+    
+    pub async fn send_pos_rot(&self) {
+        let old_pos = self.last_pos.load();
+        let pos = self.entity.pos.load();
+        self.last_pos.store(pos);
+        
+        self.entity.send_pos_rot(pos, old_pos).await;
+    }
 
     pub async fn heal(&self, additional_health: f32) {
         assert!(additional_health > 0.0);
@@ -211,7 +227,7 @@ impl LivingEntity {
     ) {
         if ground {
             let fall_distance = self.fall_distance.swap(0.0);
-            if fall_distance <= 0.0 || dont_damage || self.is_in_water().await {
+            if fall_distance <= 0.0 || dont_damage || self.entity.in_water.load(Relaxed) {
                 return;
             }
 
@@ -259,6 +275,7 @@ impl LivingEntity {
             .await;
     }
 
+/*
     async fn tick_move(&self, entity: &dyn EntityBase, server: &Server) {
         let velo = self.entity.velocity.load();
         let pos = self.entity.pos.load();
@@ -271,6 +288,7 @@ impl LivingEntity {
             .store(velo.multiply(multiplier, 1.0, multiplier));
         Entity::check_block_collision(entity, server).await;
     }
+*/
 
     async fn tick_effects(&self) {
         let mut effects_to_remove = Vec::new();
@@ -289,13 +307,10 @@ impl LivingEntity {
             self.remove_effect(effect_type).await;
         }
     }
-}
-
-#[async_trait]
-impl EntityBase for LivingEntity {
-    async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
-        self.entity.tick(caller.clone(), server).await;
-        self.tick_move(caller.as_ref(), server).await;
+    
+    async fn base_tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
+        //self.entity.tick(caller.clone(), server).await;
+        //self.tick_move(caller.as_ref(), server).await;
         self.tick_effects().await;
         if self.time_until_regen.load(Relaxed) > 0 {
             self.time_until_regen.fetch_sub(1, Relaxed);
@@ -303,7 +318,7 @@ impl EntityBase for LivingEntity {
         if self.health.load() <= 0.0 {
             let time = self
                 .death_time
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_add(1, Relaxed);
             if time == 20 {
                 // Spawn Death particles
                 self.entity
@@ -316,6 +331,25 @@ impl EntityBase for LivingEntity {
             }
         }
     }
+}
+
+#[async_trait]
+impl EntityBase for LivingEntity {
+    
+    async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
+        self.entity.tick(caller.clone(), server).await;
+        
+        if let Err(e) = self.handle_physics(0.08, server).await {
+            log::error!("Physics failed: {:?}", e);
+            self.entity.velocity.store(Vector3::default());
+            self.entity.send_velocity().await;
+            return;
+        };
+        
+        self.tick_move(self.entity.velocity.load()).await;
+        self.base_tick(Arc::clone(&caller), server);
+    }
+    
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {
         let world = self.entity.world.read().await;
         if !self.check_damage(amount) {

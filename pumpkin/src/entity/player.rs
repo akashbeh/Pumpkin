@@ -501,7 +501,7 @@ impl Player {
             return;
         }
 
-        if victim.get_living_entity().is_some() {
+        if let Some(live_victim) = victim.get_living_entity() {
             let mut knockback_strength = 1.0;
             player_attack_sound(&pos, &world, attack_type).await;
             match attack_type {
@@ -514,8 +514,7 @@ impl Player {
             if config.knockback {
                 combat::handle_knockback(
                     attacker_entity,
-                    &world,
-                    victim_entity,
+                    live_victim,
                     knockback_strength,
                 )
                 .await;
