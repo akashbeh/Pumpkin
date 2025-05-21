@@ -308,7 +308,7 @@ impl LivingEntity {
         }
     }
     
-    async fn base_tick(&self, _caller: Arc<dyn EntityBase>, _server: &Server) {
+    async fn base_tick(&self) {
         //self.entity.tick(caller.clone(), server).await;
         //self.tick_move(caller.as_ref(), server).await;
         self.tick_effects().await;
@@ -337,7 +337,7 @@ impl LivingEntity {
 impl EntityBase for LivingEntity {
     
     async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
-        self.entity.tick(caller.clone(), server).await;
+        self.entity.tick(caller, server).await;
         
         if let Err(e) = self.handle_physics(0.08, server).await {
             log::error!("Physics failed: {:?}", e);
@@ -347,7 +347,7 @@ impl EntityBase for LivingEntity {
         };
         
         self.tick_move(self.entity.velocity.load()).await;
-        self.base_tick(Arc::clone(&caller), server).await;
+        self.base_tick().await;
     }
     
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {
