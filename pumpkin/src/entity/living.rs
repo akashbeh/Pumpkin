@@ -308,7 +308,7 @@ impl LivingEntity {
         }
     }
     
-    async fn base_tick(&self) {
+    pub async fn base_tick(&self) {
         //self.entity.tick(caller.clone(), server).await;
         //self.tick_move(caller.as_ref(), server).await;
         self.tick_effects().await;

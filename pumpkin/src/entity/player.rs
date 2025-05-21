@@ -666,8 +666,12 @@ impl Player {
         }
 
         self.last_attacked_ticks.fetch_add(1, Relaxed);
-
-        self.living_entity.tick(self.clone(), server).await;
+        
+        self.living_entity.entity.tick(self.clone(), server).await;
+        let _ = self.handle_physics(0.08, server).await; // Check block collisions
+        self.living_entity.base_tick().await;
+        
+        
         self.hunger_manager.tick(self.as_ref()).await;
 
         // experience handling
