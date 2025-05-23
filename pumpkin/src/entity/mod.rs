@@ -317,11 +317,7 @@ pub trait EntityBase: Send + Sync {
         }
         
         //entity.look_at(entity.velocity.load()).await;
-        if let Some(live) = living {
-        	live.send_pos_rot().await;
-        } else {
-        	entity.send_pos_rot().await;
-        }
+        entity.send_pos_rot().await;
         entity.send_velocity().await;
         
         //entity.debug_loc().await;
@@ -343,6 +339,8 @@ pub struct Entity {
     pub world: Arc<RwLock<Arc<World>>>,
     /// The entity's current position in the world
     pub pos: AtomicCell<Vector3<f64>>,
+    /// The last position of the entity known to the client
+    pub last_pos: AtomicCell<Vector3<f64>>,
     /// The entity's position rounded to the nearest block coordinates
     pub block_pos: AtomicCell<BlockPos>,
     /// The chunk coordinates of the entity's current position
@@ -409,6 +407,7 @@ impl Entity {
             on_ground: AtomicBool::new(false),
             in_water: AtomicBool::new(false),
             pos: AtomicCell::new(position),
+            last_pos: AtomicCell::new(position),
             block_pos: AtomicCell::new(BlockPos(Vector3::new(floor_x, floor_y, floor_z))),
             chunk_pos: AtomicCell::new(Vector2::new(floor_x, floor_z)),
             sneaking: AtomicBool::new(false),
@@ -542,7 +541,18 @@ impl Entity {
         self.send_head_rot(yaw).await;
     }
     
-    pub async fn send_pos(&self, new: Vector3<f64>, old: Vector3<f64>) {
+    // Returns last "last_pos"
+    pub fn update_last_pos(&self) -> Vector3<f64> {
+        let pos = self.pos.load();
+        let old = self.last_pos.load();
+        self.last_pos.store(pos);
+        old
+    }
+    
+    pub async fn send_pos(&self) {
+        let old = self.update_last_pos();
+        let new = self.pos.load();
+        
         let converted = Vector3::new(
             new.x.mul_add(4096.0, - (old.x * 4096.0)) as i16,
             new.y.mul_add(4096.0, - (old.y * 4096.0)) as i16,
@@ -564,7 +574,9 @@ impl Entity {
             .await;
     }
     
-    pub async fn send_pos_rot(&self, new: Vector3<f64>, old: Vector3<f64>) {
+    pub async fn send_pos_rot(&self) {
+        let old = self.update_last_pos();
+        let new = self.pos.load();
     
         let converted = Vector3::new(
             new.x.mul_add(4096.0, - (old.x * 4096.0)) as i16,

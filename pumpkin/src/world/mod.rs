@@ -599,7 +599,7 @@ impl World {
         log::debug!("Sending player teleport to {}", player.gameprofile.name);
         player.request_teleport(position, yaw, pitch).await;
 
-        player.living_entity.last_pos.store(position);
+        player.living_entity.entity.last_pos.store(position);
 
         let gameprofile = &player.gameprofile;
         // Firstly, send an info update to our new player, so they can see their skin
@@ -880,7 +880,7 @@ impl World {
     }
 
     pub async fn respawn_player(&self, player: &Arc<Player>, alive: bool) {
-        let last_pos = player.living_entity.last_pos.load();
+        let last_pos = player.living_entity.entity.last_pos.load();
         let death_dimension = player.world().await.dimension_type.name();
         let death_location = BlockPos(Vector3::new(
             last_pos.x.round() as i32,
@@ -932,7 +932,7 @@ impl World {
         log::debug!("Sending player teleport to {}", player.gameprofile.name);
         player.clone().request_teleport(position, yaw, pitch).await;
 
-        player.living_entity.last_pos.store(position);
+        player.living_entity.entity.last_pos.store(position);
 
         // TODO: difficulty, exp bar, status effect
 

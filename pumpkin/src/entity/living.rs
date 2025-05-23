@@ -30,8 +30,6 @@ use tokio::sync::Mutex;
 pub struct LivingEntity {
     /// The underlying entity object, providing basic entity information and functionality.
     pub entity: Entity,
-    /// The last known position of the entity.
-    pub last_pos: AtomicCell<Vector3<f64>>,
     /// Tracks the remaining time until the entity can regenerate health.
     pub time_until_regen: AtomicI32,
     /// Stores the amount of damage the entity last received.
@@ -46,10 +44,8 @@ pub struct LivingEntity {
 }
 impl LivingEntity {
     pub fn new(entity: Entity) -> Self {
-        let pos = entity.pos.load();
         Self {
             entity,
-            last_pos: AtomicCell::new(pos),
             time_until_regen: AtomicI32::new(0),
             last_damage_taken: AtomicCell::new(0.0),
             health: AtomicCell::new(20.0),
@@ -89,27 +85,6 @@ impl LivingEntity {
                 stack_amount.try_into().unwrap(),
             ))
             .await;
-    }
-
-    pub fn set_pos(&self, position: Vector3<f64>) {
-        self.last_pos.store(self.entity.pos.load());
-        self.entity.set_pos(position);
-    }
-    
-    pub async fn send_pos(&self) {
-        let old_pos = self.last_pos.load();
-        let pos = self.entity.pos.load();
-        self.last_pos.store(pos);
-        
-        self.entity.send_pos(pos, old_pos).await;
-    }
-    
-    pub async fn send_pos_rot(&self) {
-        let old_pos = self.last_pos.load();
-        let pos = self.entity.pos.load();
-        self.last_pos.store(pos);
-        
-        self.entity.send_pos_rot(pos, old_pos).await;
     }
 
     pub async fn heal(&self, additional_health: f32) {
