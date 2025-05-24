@@ -1602,6 +1602,7 @@ impl World {
     }
     
     // Deprecated
+    /*
     pub async fn get_block_state_id_result(&self, position: &BlockPos) -> Result<u16, GetBlockError> {
         let chunk = self.get_chunk(position).await;
         let (_, relative) = position.chunk_and_chunk_relative_position();
@@ -1617,6 +1618,7 @@ impl World {
 
         Ok(id)
     }
+    */
 
     /// Gets a `Block` from the block registry. Returns `Block::AIR` if the block was not found.
     pub async fn get_block(&self, position: &BlockPos) -> pumpkin_data::Block {
@@ -1624,6 +1626,7 @@ impl World {
         get_block_by_state_id(id).unwrap_or(Block::AIR)
     }
     
+    /*
     // Deprecated
     pub async fn get_block_result(
         &self,
@@ -1632,8 +1635,8 @@ impl World {
         let id = self.get_block_state_id_result(position).await?;
         get_block_by_state_id(id).ok_or(GetBlockError::InvalidBlockId)
     }
+    */
 
-    // Deprecated
     pub async fn get_fluid(
         &self,
         position: &BlockPos,
@@ -1642,6 +1645,7 @@ impl World {
         Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId)
     }
     
+    /*
     // Deprecated
     pub async fn get_fluid_opt(
         &self,
@@ -1650,6 +1654,7 @@ impl World {
         let id = self.get_block_state_id_result(position).await?;
         Ok(Fluid::from_state_id(id))
     }
+    */
 
     /// Gets the `BlockState` from the block registry. Returns Air if the block state was not found.
     pub async fn get_block_state(&self, position: &BlockPos) -> pumpkin_data::BlockState {
@@ -1658,6 +1663,7 @@ impl World {
             .unwrap_or(get_state_by_state_id(Block::AIR.default_state_id).unwrap())
     }
     
+    /*
     // Deprecated
     pub async fn get_block_state_result(
         &self,
@@ -1666,6 +1672,7 @@ impl World {
         let id = self.get_block_state_id_result(position).await?;
         get_state_by_id(id).ok_or(GetBlockError::InvalidBlockId)
     }
+    */
 
     /// Gets the Block + Block state from the Block Registry, Returns None if the Block state has not been found
     pub async fn get_block_and_block_state(
@@ -1918,7 +1925,7 @@ impl World {
     pub async fn get_fluid_collisions(
         self: &Arc<Self>,
         bounding_box: BoundingBox,
-    ) -> Result<Vec<Fluid>, GetBlockError> {
+    ) -> Vec<Fluid> {
         let mut collisions = Vec::new();
         
         let min = bounding_box.min_block_pos();
@@ -1928,26 +1935,23 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let block_pos = BlockPos::new(x, y, z);
-                    if let Some(fluid) = self.get_fluid_opt(&block_pos).await? {
+                    if let Ok(fluid) = self.get_fluid(&block_pos).await {
                         collisions.push(fluid);
                     }
                 }
             }
         }
         
-        Ok(collisions)
+        collisions
     }
 
     pub async fn get_block_collisions(
         self: &Arc<Self>,
         bounding_box: BoundingBox,
-    ) -> Result<
-        Option<(
-            Vec<BoundingBox>, 
-            Vec<(usize, BlockState)> // Index points to the boundingbox
-        )>, 
-        GetBlockError
-    > {
+    ) -> (
+        Vec<BoundingBox>, 
+        Vec<(usize, BlockState)> // Index points to the boundingbox
+    ) {
         let mut collisions = Vec::new();
         let mut blocks = Vec::new();
         let mut i = 0;
@@ -1959,7 +1963,7 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let block_pos = BlockPos::new(x, y, z);
-                    let block = self.get_block_state_result(&block_pos).await?;
+                    let block = self.get_block_state(&block_pos).await;
                     
                         if block.is_full_cube() {
                             collisions.push(
@@ -1995,12 +1999,7 @@ impl World {
             }
         }
         
-        if collisions.len() > 0 {
-            Ok(Some((collisions, blocks)))
-        } else {
-            Ok(None)
-        }
-        
+        (collisions, blocks)
     }
     
     pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {
@@ -2018,6 +2017,7 @@ impl World {
 }
 
 // Deprecated
+/*
 pub fn get_state_by_id(id: u16) -> Option<BlockState> {
     if let Some(block) = Block::from_state_id(id) {
         let state: &pumpkin_data::BlockStateRef = block.states.iter().find(|state| state.id == id)?;
@@ -2026,6 +2026,7 @@ pub fn get_state_by_id(id: u16) -> Option<BlockState> {
         None
     }
 }
+*/
 
 #[async_trait]
 impl pumpkin_world::world::SimpleWorld for World {

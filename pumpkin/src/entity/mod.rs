@@ -31,10 +31,7 @@ use pumpkin_util::math::{
     vector3::Vector3,
     wrap_degrees,
 };
-use pumpkin_world::{
-    item::ItemStack,
-    world::GetBlockError
-};
+use pumpkin_world::item::ItemStack;
 use serde::Serialize;
 use std::sync::{
     Arc,
@@ -118,7 +115,7 @@ pub trait EntityBase: Send + Sync {
         &self,
         gravity: f64,
         server: &Server,
-    ) -> Result<(), GetBlockError> {
+    ) {
         let entity = self.get_entity();
         let living = self.get_living_entity();
         
@@ -129,7 +126,7 @@ pub trait EntityBase: Send + Sync {
                 entity.remove().await;
             }
             entity.velocity.store(Vector3::default());
-            return Ok(());
+            return;
         }
         
         let world = entity.world.read().await;
@@ -273,7 +270,7 @@ pub trait EntityBase: Send + Sync {
                 let pos = entity.pos.load();
                 let block_pos = BlockPos::floored(pos.x, pos.y - 0.51, pos.z);
                 friction = 0.91 * world
-                    .get_block_result(&block_pos).await?
+                    .get_block(&block_pos).await
                     .slipperiness as f64;
         }
         velo.x = velo.x * friction;
@@ -284,7 +281,6 @@ pub trait EntityBase: Send + Sync {
         //velo = velo.multiply(entity.velocity_multiplier());
         
         entity.velocity.store(velo);
-        Ok(())
     }
     
     // Move and send
@@ -1031,16 +1027,11 @@ impl Entity {
         
         let bounding_box = self.bounding_box.load();
         
-        let (collisions, _) = match self
+        let (collisions, _) = self
             .world.read().await
-            .get_block_collisions(bounding_box.stretch(movement)).await {
-            
-            Ok(Some(x)) => x,
-            Ok(None) => return movement,
-            Err(e) => {
-                log::error!("BLOCK FAILED: {:?}", e);
-                return Vector3::default();
-            }
+            .get_block_collisions(bounding_box.stretch(movement)).await;
+        if collisions.len() == 0 {
+            return movement;
         };
         
         let mut adjusted_movement = movement;

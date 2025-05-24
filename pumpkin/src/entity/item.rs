@@ -78,12 +78,7 @@ impl EntityBase for ItemEntity {
     async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
         self.entity.tick(caller, server).await;
         
-        if let Err(e) = self.handle_physics(0.04, server).await {
-            log::error!("Physics failed: {:?}", e);
-            self.entity.velocity.store(Vector3::default());
-            self.entity.send_velocity().await;
-            return;
-        };
+        self.handle_physics(0.04, server).await;
         
         self.tick_move(self.entity.velocity.load()).await;
         self.base_tick().await;
