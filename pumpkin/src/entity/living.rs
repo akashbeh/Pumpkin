@@ -8,7 +8,6 @@ use crate::server::Server;
 use async_trait::async_trait;
 use crossbeam::atomic::AtomicCell;
 use pumpkin_config::advanced_config;
-use pumpkin_data::Block;
 use pumpkin_data::entity::{EffectType, EntityStatus};
 use pumpkin_data::{damage::DamageType, sound::Sound};
 use pumpkin_inventory::entity_equipment::EntityEquipment;
@@ -188,11 +187,13 @@ impl LivingEntity {
     }
 
     // Check if the entity is in water
+    /*
     pub async fn is_in_water(&self) -> bool {
         let world = self.entity.world.read().await;
         let block_pos = self.entity.block_pos.load();
         world.get_block(&block_pos).await == Block::WATER
     }
+    */
 
     pub async fn update_fall_distance(
         &self,
@@ -202,7 +203,7 @@ impl LivingEntity {
     ) {
         if ground {
             let fall_distance = self.fall_distance.swap(0.0);
-            if fall_distance <= 0.0 || dont_damage || self.entity.in_water.load(Relaxed) {
+            if fall_distance <= 0.0 || dont_damage {
                 return;
             }
 
