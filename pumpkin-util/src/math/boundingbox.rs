@@ -111,10 +111,7 @@ impl BoundingBox {
     }
     
     pub fn add_pos(&self, pos: BlockPos) -> Self {
-        Self {
-            min: self.min + pos.to_f64(),
-            max: self.max + pos.to_f64(),
-        }
+        self.shift(pos.0.to_f64())
     }
     
     pub fn get_side(&self, max: bool) -> Vector3<f64> {
