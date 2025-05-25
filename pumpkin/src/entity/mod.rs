@@ -899,7 +899,7 @@ impl Entity {
                         if !suffocating && state.is_solid() {
                             let collision_shape = COLLISION_SHAPES[state.collision_shapes[0] as usize]
                                 .to_box()
-                                .add_pos(pos);
+                                .add_pos(&pos);
                             suffocating = collision_shape.intersects(&eye_level_box);
                         }
                         
@@ -907,7 +907,7 @@ impl Entity {
                         'shapes: for shape in state.collision_shapes {
                             let collision_shape = COLLISION_SHAPES[*shape as usize]
                                 .to_box()
-                                .add_pos(pos);
+                                .add_pos(&pos);
                             if collision_shape.intersects(&bounding_box) {
                                 collided = true;
                                 
@@ -993,10 +993,10 @@ impl Entity {
         let (collisions, _) = self
             .world.read().await
             .get_block_collisions(bounding_box.stretch(movement)).await;
-        if collisions.len() == 0 {
+        if collisions.is_empty() {
             return movement;
         };
-        
+        if movement.x != 0.0 && movement.z != 0.0 {println!("COLLISIONS: {collisions:?}");}
         let mut adjusted_movement = movement;
         for axis in Axis::all() {
             if movement.get_axis(axis) == 0.0 {
@@ -1017,6 +1017,7 @@ impl Entity {
             }
             
             if max_time < 1.0 {
+                if axis != Axis::Y { println!("Collision on axis {axis:?} at time {max_time}"); }
                 let changed_component = adjusted_movement.get_axis(axis) * max_time;
                 adjusted_movement.set_axis(axis, changed_component);
             }

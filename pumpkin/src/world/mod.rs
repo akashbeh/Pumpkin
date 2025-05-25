@@ -1969,7 +1969,7 @@ impl World {
                             collisions.push(
                                 COLLISION_SHAPES[block.collision_shapes[0] as usize]
                                     .to_box()
-                                    .add_pos(block_pos),
+                                    .add_pos(&block_pos),
                             );
                             i += 1;
                             blocks.push((i,block));
@@ -1985,7 +1985,7 @@ impl World {
                             let collision_shape =
                                 COLLISION_SHAPES[*shape as usize]
                                     .to_box()
-                                    .add_pos(block_pos);
+                                    .add_pos(&block_pos);
                             if collision_shape.intersects(&bounding_box) {
                                 collisions.push(collision_shape);
                                 i += 1;

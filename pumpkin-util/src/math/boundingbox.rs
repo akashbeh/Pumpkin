@@ -110,11 +110,13 @@ impl BoundingBox {
         super::squared_magnitude(d, e, f)
     }
     
-    pub fn add_pos(&self, pos: BlockPos) -> Self {
-        Self {
-            min: self.min + pos.to_f64(),
-            max: self.max + pos.to_f64(),
-        }
+    pub fn add_pos(&self, pos: &BlockPos) -> Self {
+        self.shift(pos.0.to_f64())
+        /*
+        let mut offset = Self::from_block(pos);
+        offset.max.y = offset.min.y;
+        self.offset(offset)
+        */
     }
     
     pub fn get_side(&self, max: bool) -> Vector3<f64> {
