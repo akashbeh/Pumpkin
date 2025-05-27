@@ -136,19 +136,22 @@ pub trait EntityBase: Send + Sync {
         velo.y -= gravity;
         entity.velocity.store(velo);
         
-        // in_water will be set by fluid collision
-        entity.in_water.store(false, Ordering::Relaxed);
-        let (in_wall, suffocating) = Entity::check_block_collision(entity, server).await;
-        // TODO in block collisions:
+        let suffocating = Entity::check_block_collision(entity, server).await;
+        let in_water = entity.in_water.load(Ordering::Relaxed);
+        let in_lava = entity.fire_ticks.load(Ordering::Relaxed) == 300;
+        
+        
+        // TODO
         /*
+        Change friction? Or drag?
+        Before or after gravity
+        
         lava:
-            cut living.fall_distance in half
-            velo.y *= 0.8
+            add buoyancy: 0.06?
             velo *= 0.5
         water:
-            set living.fall_distance to 0
+            add buoyancy
             velo *= 0.8
-            if buoyant: velo.y += 0.2
         
         cobweb:
             velo.x = velo.x * 0.25;
@@ -164,20 +167,6 @@ pub trait EntityBase: Send + Sync {
             if let Some(live) = living {
 	        live.damage(1.0, DamageType::IN_WALL).await;
             }
-        }
-        
-        if in_wall {
-	    // TODO: Push out of blocks
-	    
-	    /*
-	    // Note: 0.1m/tick speed to get out of blocks = 2m/s
-	    if let Some(move_out) = entity.push_out_of_blocks(&world).await? {
-		entity.move_pos(move_out);
-	    }
-	    */
-	    
-	    // Apply suffocating friction
-	    velo = velo * 0.8;
         }
         
         // Block underneath
@@ -202,9 +191,9 @@ pub trait EntityBase: Send + Sync {
         velo.x = velo.x * friction;
         velo.z = velo.z * friction;
         
-        // TODO: entity.tick_move(liquid flow)
-        
+        // TODO
         //velo = velo.multiply(entity.velocity_multiplier());
+        //Liquid flow pushing
         
         entity.velocity.store(velo);
     }
@@ -658,16 +647,6 @@ impl Entity {
     pub fn height(&self) -> f32 {
         self.bounding_box_size.load().height
     }
-    
-    /*
-    pub async fn set_fire(&self, fire: bool) {
-        if self.on_fire.load(Relaxed) == fire {
-            return;
-        }
-        self.on_fire.store(fire, Relaxed);
-        self.set_flag(Flag::OnFire, fire).await;
-    }
-    */
 
     pub async fn set_sneaking(&self, sneaking: bool) {
         assert!(self.sneaking.load(Relaxed) != sneaking);
@@ -869,7 +848,8 @@ impl Entity {
     }
 
     // Returns whether entity is in a solid block, and whether it's suffocating
-    pub async fn check_block_collision(entity_base: &dyn EntityBase, server: &Server) -> (bool, bool) {
+    // Returns whether entity is suffocating
+    pub async fn check_block_collision(entity_base: &dyn EntityBase, server: &Server) -> bool {
         let entity = entity_base.get_entity();
         let bounding_box = entity.bounding_box.load();
         
@@ -878,7 +858,7 @@ impl Entity {
         eye_level_box.min.y = eye_height;
         eye_level_box.max.y = eye_height;
         
-        let mut in_wall = false;
+        //let mut in_wall = false;
         let mut suffocating = false;
         
         let aabb = bounding_box.expand(-0.001, -0.001, -0.001);
@@ -919,9 +899,9 @@ impl Entity {
                     }
                     
                     if collided {
-                        if state.is_solid() {
-                            in_wall = true;
-                        }
+                        //if state.is_solid() {
+                        //    in_wall = true;
+                        //}
                         world
                             .block_registry
                             .on_entity_collision(block, &world, entity_base, pos, state, server)
@@ -938,7 +918,8 @@ impl Entity {
                 }
             }
         }
-        (in_wall, suffocating)
+        suffocating
+        //(in_wall, suffocating)
     }
 
     async fn teleport(
@@ -1024,56 +1005,6 @@ impl Entity {
         
         adjusted_movement
     }
-
-    // Faulty on testing. Idk why
-    // Only sometimes works
-    /*
-    async fn push_out_of_blocks(&self, world: &World) -> Result<Option<Vector3<f64>>, GetBlockError> {
-        let block_pos = self.block_pos.load();
-        
-        let mut movement = None;
-        
-        // Block pos can be in air, yet I collide with blocks;
-        // in that case, move to center of block
-        let current_block = world.get_block_state_result(&block_pos).await?;
-        if !current_block.is_full_cube() {
-            let block_pos_into = block_pos.0.to_f64();
-            let center = Vector3::new(
-                block_pos_into.x + 0.5,
-                block_pos_into.y,
-                block_pos_into.z + 0.5
-            );
-            let delta = center.sub(&self.pos.load());
-            //let scaled = delta.normalize() * 0.1;
-            //movement = Some(scaled);
-            movement = Some(delta);
-            
-            if current_block.is_air() {
-                return Ok(movement);
-            }
-        }
-        
-        for direction in BlockDirection::horizontal() {
-            let offset = direction.to_offset();
-            let offset_pos = block_pos.offset(offset);
-            
-            let block = world.get_block_state_result(&offset_pos).await?;
-                
-                
-            if let Some(_) = movement {
-                if block.is_air() {
-                    movement = Some(offset.to_f64() * 0.5);
-                    break;
-                }
-            } else {
-                if !block.is_full_cube() {
-                    movement = Some(offset.to_f64() * 0.5);
-                }
-            }
-        }
-        Ok(movement)
-    }
-    */
 
     /// Applies knockback to the entity, following vanilla Minecraft's mechanics.
     ///
