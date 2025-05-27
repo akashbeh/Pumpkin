@@ -1910,9 +1910,7 @@ impl World {
 
                     if block.is_full_cube() {
                         collisions.push(
-                            COLLISION_SHAPES[block.collision_shapes[0] as usize]
-                                .to_box()
-                                .at_pos(block_pos),
+                            COLLISION_SHAPES[block.collision_shapes[0] as usize].at_pos(block_pos),
                         );
                         i += 1;
                         blocks.push((i, block));
@@ -1925,8 +1923,7 @@ impl World {
 
                     let mut pushed_any = false;
                     for shape in block.collision_shapes {
-                        let collision_shape =
-                            COLLISION_SHAPES[*shape as usize].to_box().at_pos(block_pos);
+                        let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(block_pos);
                         if collision_shape.intersects(&bounding_box) {
                             collisions.push(collision_shape);
                             i += 1;

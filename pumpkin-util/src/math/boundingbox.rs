@@ -110,10 +110,6 @@ impl BoundingBox {
         super::squared_magnitude(d, e, f)
     }
 
-    pub fn at_pos(&self, pos: BlockPos) -> Self {
-        self.shift(pos.0.to_f64())
-    }
-
     pub fn get_side(&self, max: bool) -> Vector3<f64> {
         if max { self.max } else { self.min }
     }
@@ -190,12 +186,12 @@ impl BoundingBox {
 
         let self_moved = self.shift(movement * collision_time);
         let self_plane_moved = BoundingPlane::from_box(&self_moved, axis);
-        let other_plane = BoundingPlane::from_box(&other, axis);
+        let other_plane = BoundingPlane::from_box(other, axis);
         if !self_plane_moved.intersects(&other_plane) {
             return None;
         }
 
-        return Some(collision_time);
+        Some(collision_time)
     }
 }
 

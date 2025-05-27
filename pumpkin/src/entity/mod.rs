@@ -169,10 +169,11 @@ pub trait EntityBase: Send + Sync {
             .await;
 
         if let Some(live) = living {
-            if block == Block::CAMPFIRE || block == Block::SOUL_CAMPFIRE {
-                if CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire {
-                    let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
-                }
+            if block == Block::CAMPFIRE
+                || block == Block::SOUL_CAMPFIRE
+                    && CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
+            {
+                let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
             }
 
             if block == Block::MAGMA_BLOCK {
@@ -180,12 +181,13 @@ pub trait EntityBase: Send + Sync {
             }
         }
 
-        let mut friction = 0.98;
-        if entity.on_ground.load(Relaxed) {
-            friction = 0.91 * block.slipperiness as f64;
-        }
-        velo.x = velo.x * friction;
-        velo.z = velo.z * friction;
+        let friction = if entity.on_ground.load(Relaxed) {
+            0.91 * f64::from(block.slipperiness)
+        } else {
+            0.98
+        };
+        velo.x *= friction;
+        velo.z *= friction;
 
         // TODO
         //velo = velo.multiply(entity.velocity_multiplier());
@@ -465,7 +467,7 @@ impl Entity {
             .await
             .broadcast_packet_all(&CUpdateEntityPos::new(
                 self.entity_id.into(),
-                Vector3::new(converted.x as i16, converted.y as i16, converted.z as i16),
+                Vector3::new(converted.x, converted.y, converted.z),
                 self.on_ground.load(Relaxed),
             ))
             .await;
@@ -493,7 +495,7 @@ impl Entity {
             .await
             .broadcast_packet_all(&CUpdateEntityPosRot::new(
                 self.entity_id.into(),
-                Vector3::new(converted.x as i16, converted.y as i16, converted.z as i16),
+                Vector3::new(converted.x, converted.y, converted.z),
                 yaw,
                 pitch as u8,
                 self.on_ground.load(Relaxed),
@@ -836,8 +838,8 @@ impl Entity {
         let entity = entity_base.get_entity();
         let bounding_box = entity.bounding_box.load();
 
-        let mut eye_level_box = bounding_box.clone();
-        let eye_height = entity.standing_eye_height as f64;
+        let mut eye_level_box = bounding_box;
+        let eye_height = f64::from(entity.standing_eye_height);
         eye_level_box.min.y = eye_height;
         eye_level_box.max.y = eye_height;
 
@@ -860,16 +862,13 @@ impl Entity {
                         collided = true;
 
                         if !suffocating && state.is_solid() {
-                            let collision_shape = COLLISION_SHAPES
-                                [state.collision_shapes[0] as usize]
-                                .to_box()
-                                .at_pos(pos);
-                            suffocating = collision_shape.intersects(&eye_level_box);
+                            suffocating = COLLISION_SHAPES[state.collision_shapes[0] as usize]
+                                .at_pos(pos)
+                                .intersects(&eye_level_box);
                         }
                     } else if !state.is_air() && !state.collision_shapes.is_empty() {
                         'shapes: for shape in state.collision_shapes {
-                            let collision_shape =
-                                COLLISION_SHAPES[*shape as usize].to_box().at_pos(pos);
+                            let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(pos);
                             if collision_shape.intersects(&bounding_box) {
                                 collided = true;
 
@@ -954,9 +953,9 @@ impl Entity {
             .await
             .get_block_collisions(bounding_box.stretch(movement))
             .await;
-        if collisions.len() == 0 {
+        if collisions.is_empty() {
             return movement;
-        };
+        }
 
         let mut adjusted_movement = movement;
         for axis in Axis::all() {
@@ -999,7 +998,7 @@ impl Entity {
 
         let var8 = Vector3::new(x, 0.0, z).normalize() * strength;
         let velocity = self.velocity.load();
-        return Vector3::new(
+        Vector3::new(
             velocity.x / 2.0 - var8.x,
             if self.on_ground.load(Relaxed) {
                 (velocity.y / 2.0 + strength).min(0.4)
@@ -1007,7 +1006,7 @@ impl Entity {
                 velocity.y
             },
             velocity.z / 2.0 - var8.z,
-        );
+        )
     }
 
     pub fn jump(&self, strength: f64) {

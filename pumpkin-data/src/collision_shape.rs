@@ -1,4 +1,4 @@
-use pumpkin_util::math::{boundingbox::BoundingBox, vector3::Vector3};
+use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
 
 #[derive(Clone, Copy, Debug)]
 pub struct CollisionShape {
@@ -11,7 +11,11 @@ impl CollisionShape {
         unimplemented!()
     }
 
-    pub fn to_box(&self) -> BoundingBox {
+    pub fn at_pos(self, pos: BlockPos) -> BoundingBox {
+        self.to_box().shift(pos.0.to_f64())
+    }
+
+    fn to_box(self) -> BoundingBox {
         BoundingBox {
             min: self.min,
             max: self.max,
