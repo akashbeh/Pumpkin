@@ -5,16 +5,17 @@ use num_traits::{Float, Num};
 
 use super::vector2::Vector2;
 
-#[derive(Copy,Clone,Debug,PartialEq,Hash,Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Axis {
     X,
     Y,
-    Z
+    Z,
 }
 impl Axis {
     pub fn all() -> [Self; 3] {
         [Self::Y, Self::X, Self::Z]
     }
+
     pub fn excluding(axis: Self) -> [Self; 2] {
         match axis {
             Self::X => [Self::Y, Self::Z],
@@ -28,15 +29,15 @@ impl<T: Copy> Vector3<T> {
         match a {
             Axis::X => self.x,
             Axis::Y => self.y,
-            Axis::Z => self.z
+            Axis::Z => self.z,
         }
     }
-    
+
     pub fn set_axis(&mut self, a: Axis, value: T) {
         match a {
             Axis::X => self.x = value,
             Axis::Y => self.y = value,
-            Axis::Z => self.z = value
+            Axis::Z => self.z = value,
         };
     }
 }

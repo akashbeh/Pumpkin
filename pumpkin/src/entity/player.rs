@@ -512,12 +512,7 @@ impl Player {
                 _ => {}
             }
             if config.knockback {
-                combat::handle_knockback(
-                    attacker_entity,
-                    live_victim,
-                    knockback_strength,
-                )
-                .await;
+                combat::handle_knockback(attacker_entity, live_victim, knockback_strength).await;
             }
         }
 
@@ -666,12 +661,11 @@ impl Player {
         }
 
         self.last_attacked_ticks.fetch_add(1, Relaxed);
-        
+
         self.living_entity.entity.tick(self.clone(), server).await;
         self.handle_physics(0.08, server).await; // Tick block collisions
         self.living_entity.base_tick().await;
-        
-        
+
         self.hunger_manager.tick(self.as_ref()).await;
 
         // experience handling
@@ -2019,10 +2013,11 @@ impl Player {
         }
         Ok(())
     }
-    
-    pub fn set_pos(&self, position: Vector3<f64>) {
-        self.living_entity.entity.last_pos.store(self.living_entity.entity.pos.load());
-        self.living_entity.entity.set_pos(position);
+
+    pub fn set_pos(&self, new_pos: Vector3<f64>) {
+        let pos = self.living_entity.entity.pos.load();
+        self.living_entity.entity.last_pos.store(pos);
+        self.living_entity.entity.set_pos(new_pos);
     }
 }
 

@@ -48,7 +48,6 @@ impl AttackType {
     }
 }
 
-
 pub async fn handle_knockback(attacker: &Entity, victim: &LivingEntity, strength: f64) {
     let yaw = attacker.yaw.load();
 

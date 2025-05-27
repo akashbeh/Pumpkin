@@ -59,7 +59,7 @@ impl ItemEntity {
             pickup_delay: Mutex::new(pickup_delay), // Vanilla pickup delay is 10 ticks
         }
     }
-    
+
     async fn base_tick(&self) {
         {
             let mut delay = self.pickup_delay.lock().await;
@@ -77,9 +77,9 @@ impl ItemEntity {
 impl EntityBase for ItemEntity {
     async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
         self.entity.tick(caller, server).await;
-        
+
         self.handle_physics(0.04, server).await;
-        
+
         self.tick_move(self.entity.velocity.load()).await;
         self.base_tick().await;
     }
