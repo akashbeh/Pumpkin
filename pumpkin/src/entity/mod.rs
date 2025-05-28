@@ -8,7 +8,7 @@ use player::Player;
 use pumpkin_data::{
     Block,
     block_properties::{
-        BlockProperties, COLLISION_SHAPES, CampfireLikeProperties, Facing, HorizontalFacing,
+        BlockProperties, CampfireLikeProperties, Facing, HorizontalFacing,
     },
     damage::DamageType,
     entity::{EntityPose, EntityType},
@@ -104,97 +104,6 @@ pub trait EntityBase: Send + Sync {
     async fn on_player_collision(&self, _player: &Arc<Player>) {}
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
-
-    /*
-    There are two types of movement
-    One from velocity, the other from one-time moves,
-    like pushing out of blocks or knockback.
-    The latter uses entity.tick_move() (adjust for collisions)
-    or entity.move_pos()
-    */
-    async fn handle_physics(&self, gravity: f64, server: &Server) {
-        let entity = self.get_entity();
-        let living = self.get_living_entity();
-
-        if entity.pos.load().y < -100.0 {
-            if let Some(live) = living {
-                live.kill().await;
-            } else {
-                entity.remove().await;
-            }
-            entity.velocity.store(Vector3::default());
-            return;
-        }
-
-        let world = entity.world.read().await;
-
-        // Apply gravity
-        let mut velo = entity.velocity.load();
-        velo.y -= gravity;
-        entity.velocity.store(velo);
-
-        let suffocating = Entity::check_block_collision(entity, server).await;
-        let in_water = entity.in_water.load(Ordering::Relaxed);
-        let in_lava = entity.fire_ticks.load(Ordering::Relaxed) == 300;
-
-        // TODO
-        /*
-        Change friction? Or drag?
-        Before or after gravity
-
-        lava:
-            add buoyancy: 0.06?
-            velo *= 0.5
-        water:
-            add buoyancy
-            velo *= 0.8
-
-        cobweb:
-            velo.x = velo.x * 0.25;
-            velo.z = velo.z * 0.25;
-            velo.y = velo.y * 0.05;
-        */
-
-        let mut velo = entity.velocity.load();
-
-        if suffocating {
-            if let Some(live) = living {
-                live.damage(1.0, DamageType::IN_WALL).await;
-            }
-        }
-
-        // Block underneath
-        let (block, state) = world
-            .get_block_and_block_state(&entity.block_pos.load())
-            .await;
-
-        if let Some(live) = living {
-            if block == Block::CAMPFIRE
-                || block == Block::SOUL_CAMPFIRE
-                    && CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
-            {
-                let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
-            }
-
-            if block == Block::MAGMA_BLOCK {
-                let _ = live.damage(1.0, DamageType::HOT_FLOOR).await;
-            }
-        }
-
-        let friction = if entity.on_ground.load(Relaxed) {
-            0.91 * f64::from(block.slipperiness)
-        } else {
-            0.98
-        };
-        velo.x *= friction;
-        velo.z *= friction;
-
-        // TODO
-        //velo = velo.multiply(entity.velocity_multiplier());
-        //Liquid flow pushing
-
-        entity.velocity.store(velo);
-    }
 
     // Move and send
     async fn tick_move(&self, mut motion: Vector3<f64>) {
@@ -832,24 +741,23 @@ impl Entity {
         // }
     }
 
-    // Returns whether entity is in a solid block, and whether it's suffocating
+/*
     // Returns whether entity is suffocating
     pub async fn check_block_collision(entity_base: &dyn EntityBase, server: &Server) -> bool {
         let entity = entity_base.get_entity();
         let bounding_box = entity.bounding_box.load();
 
-        let mut eye_level_box = bounding_box;
-        let eye_height = f64::from(entity.standing_eye_height);
-        eye_level_box.min.y = eye_height;
-        eye_level_box.max.y = eye_height;
-
-        //let mut in_wall = false;
         let mut suffocating = false;
 
         let aabb = bounding_box.expand(-0.001, -0.001, -0.001);
         let blockpos = aabb.min_block_pos();
         let blockpos1 = aabb.max_block_pos();
         let world = entity.world.read().await;
+
+        let mut eye_level_box = aabb;
+        let eye_height = f64::from(entity.standing_eye_height);
+        eye_level_box.min.y = eye_height;
+        eye_level_box.max.y = eye_height;
 
         for x in blockpos.0.x..=blockpos1.0.x {
             for y in blockpos.0.y..=blockpos1.0.y {
@@ -880,9 +788,6 @@ impl Entity {
                     }
 
                     if collided {
-                        //if state.is_solid() {
-                        //    in_wall = true;
-                        //}
                         world
                             .block_registry
                             .on_entity_collision(block, &world, entity_base, pos, state, server)
@@ -900,9 +805,8 @@ impl Entity {
             }
         }
         suffocating
-        //(in_wall, suffocating)
     }
-
+*/
     async fn teleport(
         &self,
         position: Option<Vector3<f64>>,
@@ -947,7 +851,7 @@ impl Entity {
 
         let bounding_box = self.bounding_box.load();
 
-        let (collisions, _) = self
+        let collisions = self
             .world
             .read()
             .await
@@ -1015,6 +919,146 @@ impl Entity {
             velocity.y += strength;
             self.velocity.store(velocity);
         }
+    }
+
+    /*
+    There are two types of movement
+    One from velocity, the other from one-time moves,
+    like pushing out of blocks or knockback.
+    The latter uses entity.tick_move() (adjust for collisions)
+    or entity.move_pos()
+    */
+    async fn handle_physics(entity_base: &dyn EntityBase, gravity: f64, server: &Server) {
+        let entity = entity_base.get_entity();
+        let living = entity_base.get_living_entity();
+
+        if entity.pos.load().y < -100.0 {
+            if let Some(live) = living {
+                live.kill().await;
+            } else {
+                entity.remove().await;
+            }
+            entity.velocity.store(Vector3::default());
+            return;
+        }
+
+        let world = entity.world.read().await;
+
+        // Apply gravity
+        let mut velo = entity.velocity.load();
+        velo.y -= gravity;
+        entity.velocity.store(velo);
+
+        let suffocating = Self::check_block_collisions(entity_base, server).await;
+        let in_water = entity.in_water.load(Ordering::Relaxed);
+        let in_lava = entity.fire_ticks.load(Ordering::Relaxed) == 300;
+
+        // TODO
+        /*
+        Change friction? Or drag?
+        Before or after gravity
+
+        lava:
+            add buoyancy: 0.06?
+            velo *= 0.5
+        water:
+            add buoyancy
+            velo *= 0.8
+
+        cobweb:
+            velo.x = velo.x * 0.25;
+            velo.z = velo.z * 0.25;
+            velo.y = velo.y * 0.05;
+        */
+
+        let mut velo = entity.velocity.load();
+
+        if suffocating {
+            if let Some(live) = living {
+                live.damage(1.0, DamageType::IN_WALL).await;
+            }
+        }
+
+        // Block underneath
+        let (block, state) = world
+            .get_block_and_block_state(&entity.block_pos.load())
+            .await;
+
+        if let Some(live) = living {
+            if block == Block::CAMPFIRE
+                || block == Block::SOUL_CAMPFIRE
+                    && CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
+            {
+                let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
+            }
+
+            if block == Block::MAGMA_BLOCK {
+                let _ = live.damage(1.0, DamageType::HOT_FLOOR).await;
+            }
+        }
+
+        let friction = if entity.on_ground.load(Relaxed) {
+            0.91 * f64::from(block.slipperiness)
+        } else {
+            0.98
+        };
+        velo.x *= friction;
+        velo.z *= friction;
+
+        // TODO
+        //velo = velo.multiply(entity.velocity_multiplier());
+        //Liquid flow pushing
+
+        entity.velocity.store(velo);
+    }
+
+    async fn check_block_collisions(entity_base: &dyn EntityBase, server: &Server) -> bool {
+        let entity = entity_base.get_entity();
+        let bounding_box = entity.bounding_box.load();
+
+        let mut suffocating = false;
+
+        let aabb = bounding_box.expand(-0.001, -0.001, -0.001);
+        let min = aabb.min_block_pos();
+        let max = aabb.max_block_pos();
+        let world = entity.world.read().await;
+
+        let mut eye_level_box = aabb;
+        let eye_height = f64::from(entity.standing_eye_height);
+        eye_level_box.min.y = eye_height;
+        eye_level_box.max.y = eye_height;
+        
+        for x in min.0.x..=max.0.x {
+            for y in min.0.y..=max.0.y {
+                for z in min.0.z..=max.0.z {
+                    let pos = BlockPos::new(x, y, z);
+                    let (block, state) = world.get_block_and_block_state(&pos).await;
+                    let collided = World::check_collision(&bounding_box, pos, &state, 
+                        (!suffocating && state.is_solid()).then_some(
+                            |collision_shape: &BoundingBox| {
+                                suffocating = collision_shape.intersects(&eye_level_box);
+                            }
+                        )
+                    );
+
+                    if collided {
+                        world
+                            .block_registry
+                            .on_entity_collision(block, &world, entity_base, pos, state, server)
+                            .await;
+                    }
+
+                    if let Ok(fluid) = world.get_fluid(&pos).await {
+                        // TODO: Check fluid level
+                        world
+                            .block_registry
+                            .on_entity_collision_fluid(&fluid, entity_base)
+                            .await;
+                    }
+                }
+            }
+        }
+        suffocating
     }
 }
 

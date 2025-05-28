@@ -1887,17 +1887,13 @@ impl World {
 
         collisions
     }
-
+/*
+    // For adjusting movement
     pub async fn get_block_collisions(
         self: &Arc<Self>,
         bounding_box: BoundingBox,
-    ) -> (
-        Vec<BoundingBox>,
-        Vec<(usize, BlockState)>, // Index points to the boundingbox
-    ) {
+    ) -> Vec<BoundingBox> {
         let mut collisions = Vec::new();
-        let mut blocks = Vec::new();
-        let mut i = 0;
 
         let min = bounding_box.min_block_pos();
         let max = bounding_box.max_block_pos();
@@ -1906,38 +1902,80 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let block_pos = BlockPos::new(x, y, z);
-                    let block = self.get_block_state(&block_pos).await;
+                    let state = self.get_block_state(&block_pos).await;
 
-                    if block.is_full_cube() {
+                    if state.is_full_cube() {
                         collisions.push(
-                            COLLISION_SHAPES[block.collision_shapes[0] as usize].at_pos(block_pos),
+                            COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(block_pos),
                         );
-                        i += 1;
-                        blocks.push((i, block));
                         continue;
                     }
 
-                    if block.is_air() || block.collision_shapes.is_empty() {
+                    if state.is_air() || state.collision_shapes.is_empty() {
                         continue;
                     }
 
-                    let mut pushed_any = false;
-                    for shape in block.collision_shapes {
+                    for shape in state.collision_shapes {
                         let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(block_pos);
                         if collision_shape.intersects(&bounding_box) {
                             collisions.push(collision_shape);
-                            i += 1;
-                            pushed_any = true;
                         }
-                    }
-                    if pushed_any {
-                        blocks.push((i, block));
                     }
                 }
             }
         }
 
-        (collisions, blocks)
+        collisions
+    }
+*/
+    pub fn check_collision<F>(bounding_box: &BoundingBox, pos: BlockPos, state: &BlockState, mut use_collision_shape: Option<F>) -> bool
+    where F: FnMut(&BoundingBox) {
+        let mut collided = false;
+        if state.is_full_cube() {
+            collided = true;
+
+            if let Some(mut function) = use_collision_shape {
+                let collision_shape = COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(pos);
+                function(&collision_shape);
+            }
+        } else if !state.is_air() && !state.collision_shapes.is_empty() {
+            'shapes: for shape in state.collision_shapes {
+                let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(pos);
+                if collision_shape.intersects(bounding_box) {
+                    collided = true;
+
+                    if let Some(ref mut function) = use_collision_shape {
+                        function(&collision_shape);
+                    } else {
+                        break 'shapes;
+                    }
+                }
+            }
+        }
+        collided
+    }
+
+    // For adjusting movement
+    pub async fn get_block_collisions(
+        self: &Arc<Self>,
+        bounding_box: BoundingBox,
+    ) -> Vec<BoundingBox> {
+        let mut collisions = Vec::new();
+
+        let min = bounding_box.min_block_pos();
+        let max = bounding_box.max_block_pos();
+        for x in min.0.x..=max.0.x {
+            for y in min.0.y..=max.0.y {
+                for z in min.0.z..=max.0.z {
+                    let pos = BlockPos::new(x, y, z);
+                    let state = self.get_block_state(&pos).await;
+                    let _collided = Self::check_collision(&bounding_box, pos, &state, Some(|collision_shape: &BoundingBox|
+                        { collisions.push(*collision_shape); }
+                    ));
+                }
+            }
+        }
+        collisions
     }
 
     pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {

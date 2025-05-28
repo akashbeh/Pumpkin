@@ -663,7 +663,7 @@ impl Player {
         self.last_attacked_ticks.fetch_add(1, Relaxed);
 
         self.living_entity.entity.tick(self.clone(), server).await;
-        self.handle_physics(0.08, server).await; // Tick block collisions
+        Entity::handle_physics(&**self as &dyn EntityBase, 0.08, server).await; // Tick block collisions
         self.living_entity.base_tick().await;
 
         self.hunger_manager.tick(self.as_ref()).await;
