@@ -1959,8 +1959,9 @@ impl World {
     pub async fn get_block_collisions(
         self: &Arc<Self>,
         bounding_box: BoundingBox,
-    ) -> Vec<BoundingBox> {
+    ) -> (Vec<BoundingBox>, Vec<(usize, BlockPos)>) {
         let mut collisions = Vec::new();
+        let mut positions = Vec::new();
 
         let min = bounding_box.min_block_pos();
         let max = bounding_box.max_block_pos();
@@ -1969,13 +1970,16 @@ impl World {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let state = self.get_block_state(&pos).await;
-                    let _collided = Self::check_collision(&bounding_box, pos, &state, Some(|collision_shape: &BoundingBox|
+                    let collided = Self::check_collision(&bounding_box, pos, &state, Some(|collision_shape: &BoundingBox|
                         { collisions.push(*collision_shape); }
                     ));
+                    if collided {
+                        positions.push((collisions.len(), pos));
+                    }
                 }
             }
         }
-        collisions
+        (collisions, positions)
     }
 
     pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {

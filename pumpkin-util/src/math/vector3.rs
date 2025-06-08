@@ -15,6 +15,10 @@ impl Axis {
     pub fn all() -> [Self; 3] {
         [Self::Y, Self::X, Self::Z]
     }
+    
+    pub fn horizontal() -> [Self; 2] {
+        [Self::X, Self::Z]
+    }
 
     pub fn excluding(axis: Self) -> [Self; 2] {
         match axis {

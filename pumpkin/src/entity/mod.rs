@@ -155,6 +155,8 @@ pub struct Entity {
     pub last_pos: AtomicCell<Vector3<f64>>,
     /// The entity's position rounded to the nearest block coordinates
     pub block_pos: AtomicCell<BlockPos>,
+    /// The block supporting the entity
+    pub supporting_block_pos: AtomicCell<Option<BlockPos>>,
     /// The chunk coordinates of the entity's current position
     pub chunk_pos: AtomicCell<Vector2<i32>>,
     /// Indicates whether the entity is sneaking
@@ -221,6 +223,7 @@ impl Entity {
             pos: AtomicCell::new(position),
             last_pos: AtomicCell::new(position),
             block_pos: AtomicCell::new(BlockPos(Vector3::new(floor_x, floor_y, floor_z))),
+            supporting_block_pos: AtomicCell::new(None),
             chunk_pos: AtomicCell::new(Vector2::new(floor_x, floor_z)),
             sneaking: AtomicBool::new(false),
             world: Arc::new(RwLock::new(world)),
@@ -851,7 +854,7 @@ impl Entity {
 
         let bounding_box = self.bounding_box.load();
 
-        let collisions = self
+        let (collisions, block_positions) = self
             .world
             .read()
             .await
@@ -862,7 +865,38 @@ impl Entity {
         }
 
         let mut adjusted_movement = movement;
-        for axis in Axis::all() {
+        // Y-Axis adjustment
+        if movement.get_axis(Axis::Y) != 0.0 {
+            let mut max_time = 1.0;
+            
+            let mut positions = block_positions.into_iter();
+            let (mut collisions_len, mut position) = positions.next().unwrap();
+            let mut supporting_block_pos = None;
+
+            for (i, inert_box) in collisions.iter().enumerate() {
+                if i == collisions_len {
+                    (collisions_len, position) = positions.next().unwrap();
+                }
+
+                if let Some(collision_time) = bounding_box.calculate_collision_time(
+                    inert_box,
+                    adjusted_movement,
+                    Axis::Y,
+                    max_time,
+                ) {
+                    max_time = collision_time;
+                    supporting_block_pos = Some(position);
+                }
+            }
+
+            if max_time != 1.0 {
+                let changed_component = adjusted_movement.get_axis(Axis::Y) * max_time;
+                adjusted_movement.set_axis(Axis::Y, changed_component);
+            }
+            self.supporting_block_pos.store(supporting_block_pos);
+        }
+
+        for axis in Axis::horizontal() {
             if movement.get_axis(axis) == 0.0 {
                 continue;
             }
@@ -879,7 +913,7 @@ impl Entity {
                 }
             }
 
-            if max_time < 1.0 {
+            if max_time != 1.0 {
                 let changed_component = adjusted_movement.get_axis(axis) * max_time;
                 adjusted_movement.set_axis(axis, changed_component);
             }
@@ -979,29 +1013,31 @@ impl Entity {
             }
         }
 
-        // Block underneath
-        let (block, state) = world
-            .get_block_and_block_state(&entity.block_pos.load())
-            .await;
+        let mut friction = 0.98;
 
-        if let Some(live) = living {
-            if block == Block::CAMPFIRE
-                || block == Block::SOUL_CAMPFIRE
-                    && CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
-            {
-                let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
-            }
+        if entity.on_ground.load(Ordering::Relaxed) {
+            if let Some(supporting_block_pos) = entity.supporting_block_pos.load() {
+                let (block, state) = world
+                    .get_block_and_block_state(&supporting_block_pos)
+                    .await;
 
-            if block == Block::MAGMA_BLOCK {
-                let _ = live.damage(1.0, DamageType::HOT_FLOOR).await;
+                if let Some(live) = living {
+                    if block == Block::CAMPFIRE
+                        || block == Block::SOUL_CAMPFIRE
+                            && CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
+                    {
+                        let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
+                    }
+
+                    if block == Block::MAGMA_BLOCK {
+                        let _ = live.damage(1.0, DamageType::HOT_FLOOR).await;
+                    }
+                }
+
+                friction = 0.91 * f64::from(block.slipperiness);
             }
         }
 
-        let friction = if entity.on_ground.load(Relaxed) {
-            0.91 * f64::from(block.slipperiness)
-        } else {
-            0.98
-        };
         velo.x *= friction;
         velo.z *= friction;
 
