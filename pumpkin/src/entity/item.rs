@@ -78,9 +78,10 @@ impl EntityBase for ItemEntity {
     async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
         self.entity.tick(caller, server).await;
 
+        // TODO: Vanilla order of operations
         Entity::handle_physics(self, 0.04, server).await;
+        self.move_entity(self.entity.velocity.load()).await;
 
-        self.tick_move(self.entity.velocity.load()).await;
         self.base_tick().await;
     }
 

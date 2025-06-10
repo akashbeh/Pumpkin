@@ -56,7 +56,7 @@ pub async fn handle_knockback(attacker: &Entity, victim: &LivingEntity, strength
         f64::from((yaw.to_radians()).sin()),
         f64::from(-(yaw.to_radians()).cos()),
     );
-    victim.tick_move(knockback).await;
+    victim.move_entity(knockback).await;
     let velocity = attacker.velocity.load();
     attacker.velocity.store(velocity.multiply(0.6, 1.0, 0.6));
 }

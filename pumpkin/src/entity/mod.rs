@@ -105,16 +105,11 @@ pub trait EntityBase: Send + Sync {
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
 
-    // Move and send
-    async fn tick_move(&self, mut motion: Vector3<f64>) {
+    // Move by a delta, adjust for collisions, and send
+    // TODO: MovementType for pistons etc
+    async fn move_entity(&self, mut motion: Vector3<f64>) {
         let entity = self.get_entity();
         let living = self.get_living_entity();
-
-        for axis in Axis::all() {
-            if motion.get_axis(axis).abs() < 0.03 {
-                motion.set_axis(axis, 0.0);
-            }
-        }
 
         let final_move = entity.adjust_movement_for_collisions(motion).await;
 
@@ -169,8 +164,10 @@ pub struct Entity {
     pub velocity: AtomicCell<Vector3<f64>>,
     /// Indicates whether the entity is on the ground (may not always be accurate).
     pub on_ground: AtomicBool,
-    /// Indicates whether the entity is in water
-    pub in_water: AtomicBool,
+    /// Indicates whether the entity is in water and if so, the fluid height
+    pub water_height: AtomicCell<Option<f64>>,
+    /// Indicates whether the entity is in lava and if so, the fluid height
+    pub lava_height: AtomicCell<Option<f64>>,
     /// The entity's yaw rotation (horizontal rotation) ← →
     pub yaw: AtomicCell<f32>,
     /// The entity's head yaw rotation (horizontal rotation of the head)
@@ -219,7 +216,8 @@ impl Entity {
             entity_uuid,
             entity_type,
             on_ground: AtomicBool::new(false),
-            in_water: AtomicBool::new(false),
+            water_height: AtomicCell::new(None),
+            lava_height: AtomicCell::new(None),
             pos: AtomicCell::new(position),
             last_pos: AtomicCell::new(position),
             block_pos: AtomicCell::new(BlockPos(Vector3::new(floor_x, floor_y, floor_z))),
@@ -955,14 +953,41 @@ impl Entity {
         }
     }
 
+    // Part of LivingEntity.tickMovement() in yarn
+    pub fn check_zero_velo(&self) {
+        let mut motion = self.velocity.load();
+        if self.entity_type == EntityType::PLAYER {
+            if motion.horizontal_length_squared() < 9.0E-6 {
+                motion.x = 0.0;
+                motion.z = 0.0;
+            }
+        } else {
+            for axis in Axis::horizontal() {
+                if motion.get_axis(axis).abs() < 0.003 {
+                    motion.set_axis(axis, 0.0);
+                }
+            }
+        }
+        if motion.y.abs() < 0.003 {
+            motion.y = 0.0;
+        }
+        self.velocity.store(motion);
+    }
+
     /*
     There are two types of movement
-    One from velocity, the other from one-time moves,
-    like pushing out of blocks or knockback.
-    The latter uses entity.tick_move() (adjust for collisions)
+    One through velocity, the other through one-time moves,
+    like knockback.
+    The latter uses entity.tick_move() (to adjust for collisions)
     or entity.move_pos()
     */
-    async fn handle_physics(entity_base: &dyn EntityBase, gravity: f64, server: &Server) {
+    // travelMidAir in yarn
+    // travelInAir in PaperMC
+    async fn handle_physics(
+        entity_base: &dyn EntityBase,
+        gravity: f64,
+        server: &Server
+    ) {
         let entity = entity_base.get_entity();
         let living = entity_base.get_living_entity();
 
@@ -984,7 +1009,8 @@ impl Entity {
         entity.velocity.store(velo);
 
         let suffocating = Self::check_block_collisions(entity_base, server).await;
-        let in_water = entity.in_water.load(Ordering::Relaxed);
+        
+        let touching_water = entity.touching_water.load(Ordering::Relaxed);
         let in_lava = entity.fire_ticks.load(Ordering::Relaxed) == 300;
 
         // TODO
@@ -1005,16 +1031,16 @@ impl Entity {
             velo.y = velo.y * 0.05;
         */
 
-        let mut velo = entity.velocity.load();
-
         if suffocating {
             if let Some(live) = living {
                 live.damage(1.0, DamageType::IN_WALL).await;
             }
         }
 
-        let mut friction = 0.98;
 
+        let mut velo = entity.velocity.load();
+
+        let mut friction = 0.91;
         if entity.on_ground.load(Ordering::Relaxed) {
             if let Some(supporting_block_pos) = entity.supporting_block_pos.load() {
                 let (block, state) = world
@@ -1040,6 +1066,7 @@ impl Entity {
 
         velo.x *= friction;
         velo.z *= friction;
+        velo.y *= 0.98;
 
         // TODO
         //velo = velo.multiply(entity.velocity_multiplier());
@@ -1048,6 +1075,7 @@ impl Entity {
         entity.velocity.store(velo);
     }
 
+    // Returns whether the entity's eye level is in a wall
     async fn check_block_collisions(entity_base: &dyn EntityBase, server: &Server) -> bool {
         let entity = entity_base.get_entity();
         let bounding_box = entity.bounding_box.load();
@@ -1063,7 +1091,7 @@ impl Entity {
         let eye_height = f64::from(entity.standing_eye_height);
         eye_level_box.min.y = eye_height;
         eye_level_box.max.y = eye_height;
-        
+
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
@@ -1083,18 +1111,148 @@ impl Entity {
                             .on_entity_collision(block, &world, entity_base, pos, state, server)
                             .await;
                     }
-
-                    if let Ok(fluid) = world.get_fluid(&pos).await {
-                        // TODO: Check fluid level
-                        world
-                            .block_registry
-                            .on_entity_collision_fluid(&fluid, entity_base)
-                            .await;
-                    }
                 }
             }
         }
         suffocating
+    }
+
+    // updateWaterState() in yarn
+    async fn update_fluid_state(entity_base: &dyn EntityBase, server: &Server) -> bool {
+        let is_pushed = entity_base.is_pushed_by_fluids();
+        let mut fluids = HashMap::new();
+
+        let water_push = Vector3::default();
+        let water_n = 0;
+        let lava_push = Vector3::default();
+        let lava_n = 0;
+        let mut fluid_push = [water_push, lava_push];
+        let mut fluid_n = [water_n, lava_n];
+
+        let mut fluid_height = [0.0, 0.0];
+
+        let entity = entity_base.get_entity();
+        let bounding_box = entity.bounding_box.load().expand(-0.001, -0.001, -0.001);
+        let min = bounding_box.min_block_pos();
+        let max = bounding_box.max_block_pos();
+        let world = entity.world.read().await;
+
+        for x in min.0.x..=max.0.x {
+            for y in min.0.y..=max.0.y {
+                for z in min.0.z..=max.0.z {
+                    let pos = BlockPos::new(x, y, z);
+                    if let Ok(fluid) = world.get_fluid(&pos).await {
+                        let collision_shape = todo!(); // .at_pos();
+                        if collision_shape.intersects(bounding_box) {
+                            fluids.insert(fluid.id, fluid);
+
+                            let i = if fluid.id == Fluid::LAVA.id || fluid.id == Fluid::FLOWING_LAVA.id {
+                                1
+                            } else {
+                                0
+                            };
+                            fluid_height[i] = fluid_height[i].max(collision_shape.max.y - bounding_box.max.y);
+
+                            if !is_pushed {
+                                continue;
+                            }
+
+                            let fluid_velo: Vector3<f64> = todo!();
+                            if fluid_height[i] < 0.4 {
+                                fluid_velo = fluid_velo.multiply(fluid_height[i]);
+                            }
+                            fluid_push[i] = fluid_push[i].add(fluid_velo);
+                            fluid_n[i] += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        for fluid in fluids.values().iter() {
+            world
+                .fluid_registry
+                .on_entity_collision_fluid(fluid, entity_base)
+                .await;
+        }
+
+        let lava_speed = if self.world.read().await.dimension_type == DimensionType::TheNether {
+            0.007
+        } else {
+            0.002333333
+        };
+        entity.push_by_fluid(0.014, fluid_push[0], fluid_n[0]);
+        entity.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
+
+        let water_height = fluid_height[0];
+        let was_in_water = entity.in_water();
+        entity.water_height.store(if water_height != 0.0 {
+            if let Some(living) = entity.get_living_entity() {
+                living.fall_distance.store(0.0);
+            }
+            if !was_in_water {
+                // TODO: Spawn splash particles
+            }
+            Some(water_height))
+        } else {
+            None
+        });
+
+        let lava_height = fluid_height[1];
+        entity.lava_height.store(if lava_height != 0.0 {
+            if let Some(living) = entity.get_living_entity() {
+                let halved_fall = living.fall_distance.load() / 2.0;
+                if halved_fall != 0.0 {
+                    living.fall_distance.store(halved_fall);
+                }
+            }
+            Some(lava_height))
+        } else {
+            None
+        });
+    }
+
+    fn push_by_fluid(&self, speed: f64, mut push: Vector3<f64>, n: f64) {
+        if push.length_squared() != 0.0 {
+            if n > 0 {
+                push = push.multiply(1.0 / n.into());
+            }
+            if self.entity_type != EntityType::PLAYER {
+                push = push.normalize();
+            }
+            push = push.multiply(speed);
+
+            let mut velo = self.velocity.load();
+            let g = 0.003;
+            if velo.x.abs() < g && velo.z.abs() < g && velo.length < 0.0045 {
+                push = push.normalize().multiply(0.0045);
+            }
+            self.velocity.store(velo);
+        }
+    }
+
+    pub fn in_water(&self) -> bool {
+        self.water_height.load().is_some()
+    }
+    pub fn in_lava(&self) -> bool {
+        self.lava_height.load().is_some()
+    }
+
+    async fn get_pos_with_y_offset(offset: f64) -> BlockPos {
+        if let Some(supporting_block) = self.supporting_block.load() {
+            if offset > 1.0e-5 {
+                let (block, state) = self
+                    .world
+                    .read()
+                    .await
+                    .get_block_and_block_state(supporting_block)
+                    .await;
+                let properties = block.properties(state.id);
+                if offset <= 0.5 && supporting_block
+            }
+        } else {
+            self.block_pos.load()
+        }
     }
 }
 
@@ -1106,6 +1264,7 @@ impl EntityBase for Entity {
 
     async fn tick(&self, caller: Arc<dyn EntityBase>, _server: &Server) {
         self.tick_portal(&caller).await;
+        self.update_fluid_state().await;
         let fire_ticks = self.fire_ticks.load(Ordering::Relaxed);
         if fire_ticks > 0 {
             if self.entity_type.fire_immune {
@@ -1143,6 +1302,10 @@ impl EntityBase for Entity {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         None
+    }
+
+    fn is_pushed_by_fluids(&self) -> bool {
+        true
     }
 }
 

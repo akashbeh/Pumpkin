@@ -23,6 +23,8 @@ use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::item::ItemStack;
 use tokio::sync::Mutex;
 
+const GRAVITY: f64 = 0.08;
+
 /// Represents a living entity within the game world.
 ///
 /// This struct encapsulates the core properties and behaviors of living entities, including players, mobs, and other creatures.
@@ -40,6 +42,7 @@ pub struct LivingEntity {
     pub fall_distance: AtomicCell<f32>,
     pub active_effects: Mutex<HashMap<EffectType, Effect>>,
     pub entity_equipment: Arc<Mutex<EntityEquipment>>,
+    pub movement_input: AtomicCell<Vector3<f64>>,
 }
 impl LivingEntity {
     pub fn new(entity: Entity) -> Self {
@@ -270,8 +273,6 @@ impl LivingEntity {
     }
 
     pub async fn base_tick(&self) {
-        //self.entity.tick(caller.clone(), server).await;
-        //self.tick_move(caller.as_ref(), server).await;
         self.tick_effects().await;
         if self.time_until_regen.load(Relaxed) > 0 {
             self.time_until_regen.fetch_sub(1, Relaxed);
@@ -290,16 +291,52 @@ impl LivingEntity {
             }
         }
     }
+
+    fn get_effective_gravity(&self) -> f64 {
+        // TODO: If hasNoGravity() { 0.0 }
+        if self.entity.velocity.load().y <= 0.0 && self.has_effect(EffectType::SLOW_FALLING) {
+            0.01
+        } else {
+            GRAVITY
+        }
+    }
+
+    async fn tick_movement(&self) {
+        self.entity.check_zero_velo();
+        let mut movement_input = self.movement_input.load();
+        movement_input.x *= 0.98;
+        movement_input.z *= 0.98;
+        self.movement_input.store(movement_input);
+
+        if self.has_effect(EffectType::SLOW_FALLING) || self.has_effect(EffectType::LEVITATION) {
+            self.fall_distance.store(0.0);
+        }
+
+        if self.entity.in_water() || self.entity.in_lava() {
+            self.travel_in_fluid();
+        } else {
+            self.travel_in_air();
+        }
+        Entity::handle_physics(self, 0.08, server).await;
+        self.entity.tick_move(self.entity.velocity.load()).await;
+    }
+    async fn travel_in_air(&self) {
+        let movement_input = self.movement_input.load();
+        
+    }
+    async fn travel_in_fluid(&self) {
+        let movement_input = self.movement_input.load();
+    }
 }
 
 #[async_trait]
 impl EntityBase for LivingEntity {
     async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
+        // Following vanilla order of operations
         self.entity.tick(caller, server).await;
-
-        Entity::handle_physics(self, 0.08, server).await;
-        self.tick_move(self.entity.velocity.load()).await;
         self.base_tick().await;
+
+        self.tick_movement().await;
     }
 
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {
