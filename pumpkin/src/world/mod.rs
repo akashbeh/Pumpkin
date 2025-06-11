@@ -1887,6 +1887,22 @@ impl World {
 
         collisions
     }
+
+    pub async fn check_fluid_collision(self: &Arc<Self>, bounding_box: BoundingBox) -> bool {
+        let min = bounding_box.min_block_pos();
+        let max = bounding_box.max_block_pos();
+
+        for x in min.0.x..=max.0.x {
+            for y in min.0.y..=max.0.y {
+                for z in min.0.z..=max.0.z {
+                    let block_pos = BlockPos::new(x, y, z);
+                    if let Ok(fluid) = self.get_fluid(&block_pos).await {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
 /*
     // For adjusting movement
     pub async fn get_block_collisions(

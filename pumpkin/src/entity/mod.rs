@@ -105,6 +105,9 @@ pub trait EntityBase: Send + Sync {
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
 
+    async fn move_velo(&self) {
+        self.move_entity(self.velocity.load()).await;
+    }
     // Move by a delta, adjust for collisions, and send
     // TODO: MovementType for pistons etc
     async fn move_entity(&self, mut motion: Vector3<f64>) {
@@ -112,9 +115,6 @@ pub trait EntityBase: Send + Sync {
         let living = self.get_living_entity();
 
         let final_move = entity.adjust_movement_for_collisions(motion).await;
-
-        let on_ground = final_move.y == 0.0;
-        entity.on_ground.store(on_ground, Relaxed);
 
         entity.move_pos(final_move);
         entity.velocity.store(final_move);
@@ -129,16 +129,6 @@ pub trait EntityBase: Send + Sync {
         entity.send_velocity().await;
 
         //entity.debug_loc().await;
-    }
-
-    // Only for LivingEntity and Player
-    fn get_off_ground_speed(&self) -> f64 {
-        unimplemented!()
-    }
-
-    // Only for LivingEntity and Player
-    fn get_movement_speed(&self) -> f64 {
-        unimplemented!()
     }
 }
 
@@ -172,11 +162,17 @@ pub struct Entity {
     pub fall_flying: AtomicBool,
     /// The entity's current velocity vector, aka knockback
     pub velocity: AtomicCell<Vector3<f64>>,
+    /// Tracks a horizontal collision
+    pub horizontal_collision: AtomicBool,
     /// Indicates whether the entity is on the ground (may not always be accurate).
     pub on_ground: AtomicBool,
-    /// Indicates whether the entity is in water and if so, the fluid height
+    /// Indicates whether the entity is touching water
+    pub touching_water: AtomicBool,
+    /// Indicates the fluid height
     pub water_height: AtomicCell<Option<f64>>,
-    /// Indicates whether the entity is in lava and if so, the fluid height
+    /// Indicates whether the entity is touching lava
+    pub touching_lava: AtomicBool,
+    /// Indicates the fluid height
     pub lava_height: AtomicCell<Option<f64>>,
     /// The entity's yaw rotation (horizontal rotation) ← →
     pub yaw: AtomicCell<f32>,
@@ -225,9 +221,12 @@ impl Entity {
             entity_id: CURRENT_ID.fetch_add(1, Relaxed),
             entity_uuid,
             entity_type,
+            horizontal_collision: AtomicBool::new(false),
             on_ground: AtomicBool::new(false),
-            water_height: AtomicCell::new(None),
-            lava_height: AtomicCell::new(None),
+            touching_water: AtomicBool::new(false),
+            water_height: AtomicCell::new(0.0),
+            touching_lava: AtomicBool::new(false),
+            lava_height: AtomicCell::new(0.0),
             pos: AtomicCell::new(position),
             last_pos: AtomicCell::new(position),
             block_pos: AtomicCell::new(BlockPos(Vector3::new(floor_x, floor_y, floor_z))),
@@ -901,9 +900,11 @@ impl Entity {
                 let changed_component = adjusted_movement.get_axis(Axis::Y) * max_time;
                 adjusted_movement.set_axis(Axis::Y, changed_component);
             }
+            self.on_ground.store(supporting_block_pos.is_some(), Ordering::Relaxed);
             self.supporting_block_pos.store(supporting_block_pos);
         }
 
+        let mut horizontal_collision = false;
         for axis in Axis::horizontal() {
             if movement.get_axis(axis) == 0.0 {
                 continue;
@@ -924,8 +925,10 @@ impl Entity {
             if max_time != 1.0 {
                 let changed_component = adjusted_movement.get_axis(axis) * max_time;
                 adjusted_movement.set_axis(axis, changed_component);
+                horizontal_collision = true;
             }
         }
+        self.horizontal_collision.store(horizontal_collision, Ordering::Relaxed);
 
         adjusted_movement
     }
@@ -953,14 +956,6 @@ impl Entity {
             },
             velocity.z / 2.0 - var8.z,
         )
-    }
-
-    pub fn jump(&self, strength: f64) {
-        if self.on_ground.load(Relaxed) {
-            let mut velocity = self.velocity.load();
-            velocity.y += strength;
-            self.velocity.store(velocity);
-        }
     }
 
     // Part of LivingEntity.tickMovement() in yarn
@@ -1134,6 +1129,7 @@ impl Entity {
         let mut fluid_push = [water_push, lava_push];
         let mut fluid_n = [water_n, lava_n];
 
+        let mut in_fluid = [false, false];
         let mut fluid_height = [0.0, 0.0];
 
         let entity = entity_base.get_entity();
@@ -1157,6 +1153,7 @@ impl Entity {
                                 0
                             };
                             fluid_height[i] = fluid_height[i].max(collision_shape.max.y - bounding_box.max.y);
+                            in_fluid[i] = true;
 
                             if !is_pushed {
                                 continue;
@@ -1190,31 +1187,31 @@ impl Entity {
         entity.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
 
         let water_height = fluid_height[0];
-        let was_in_water = entity.in_water();
-        entity.water_height.store(if water_height != 0.0 {
+        let in_water = in_fluid[0];
+        let was_in_water = entity.touching_water.load(Ordering::Relaxed);
+        if in_water {
             if let Some(living) = entity.get_living_entity() {
                 living.fall_distance.store(0.0);
             }
             if !was_in_water {
                 // TODO: Spawn splash particles
             }
-            Some(water_height))
-        } else {
-            None
-        });
+        }
+        entity.water_height.store(water_height);
+        entity.touching_water.store(in_water, Ordering::Relaxed);
 
         let lava_height = fluid_height[1];
-        entity.lava_height.store(if lava_height != 0.0 {
+        let in_lava = in_fluid[1];
+        if in_lava {
             if let Some(living) = entity.get_living_entity() {
                 let halved_fall = living.fall_distance.load() / 2.0;
                 if halved_fall != 0.0 {
                     living.fall_distance.store(halved_fall);
                 }
             }
-            Some(lava_height))
-        } else {
-            None
-        });
+        }
+        entity.lava_height.store(lava_height);
+        entity.touching_lava.store(in_lava, Ordering::Relaxed);
     }
 
     fn push_by_fluid(&self, speed: f64, mut push: Vector3<f64>, n: f64) {
@@ -1236,13 +1233,6 @@ impl Entity {
         }
     }
 
-    pub fn in_water(&self) -> bool {
-        self.water_height.load().is_some()
-    }
-    pub fn in_lava(&self) -> bool {
-        self.lava_height.load().is_some()
-    }
-
     async fn get_pos_with_y_offset(offset: f64) -> BlockPos {
         if let Some(mut supporting_block) = self.supporting_block.load() {
             if offset > 1.0e-5 {
@@ -1252,7 +1242,8 @@ impl Entity {
                     .await
                     .get_block_and_block_state(supporting_block)
                     .await;
-                if offset <= 0.5 && (block.has_properties::<block_properties::OakFenceLikeProperties>::() || block.has_properties::<block_properties::ResinBrickWallLikeProperties> || block.has_properties::<block_properties::OakFenceGateLikeProperties>::() && block.properties(state.id).iter().find(|(name, value)| name == "open" && value == true.to_string()).is_some()) {
+                let props = block.properties(state.id).to_props();
+                if offset <= 0.5 && (Block::has_properties::<block_properties::OakFenceLikeProperties>::(&props) || Block::has_properties::<block_properties::ResinBrickWallLikeProperties>::(&props) || Block::has_properties::<block_properties::OakFenceGateLikeProperties>::(&props) && props.iter().find(|name, value| name == "open" && value == true.to_string()).is_some() {
                     return supporting_block;
                 }
                 supporting_block.y = (self.pos.load().y - offset).floor() as i32;
@@ -1265,8 +1256,14 @@ impl Entity {
         block_pos;
     }
 
+    // Entity.updateVelocity in yarn
+    fn update_velocity_from_input(&self, movement_input: Vector3<f64>, speed: f64) {
+        let final_input = self.entity.movement_input_to_velocity(movement_input, speed);
+        self.entity.velocity.store(self.entity.velocity.load() + final_input);
+    }
+
     // Entity.movementInputToVelocity in yarn
-    fn movement_input_to_velocity(&self, movement_input: f64, speed: f64) -> Vector3<f64> {
+    fn movement_input_to_velocity(&self, movement_input: Vector3<f64>, speed: f64) -> Vector3<f64> {
         let yaw = self.yaw.load();
         let dist = movement_input.length_squared();
         if dist < 1.0e-7 {
@@ -1285,7 +1282,6 @@ impl Entity {
             lv.y,
             lv.z * i as f64 + lv.x * h as f64,
         )
-
     }
 }
 

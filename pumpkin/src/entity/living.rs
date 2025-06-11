@@ -44,9 +44,22 @@ pub struct LivingEntity {
     pub entity_equipment: Arc<Mutex<EntityEquipment>>,
     pub movement_input: AtomicCell<Vector3<f64>>,
     pub movement_speed: AtomicCell<f64>,
+    pub jumping: AtomicBool,
+    pub jumping_cooldown: AtomicU8,
+    pub climbing: AtomicBool,
+    /// The position where the entity was last climbing, used for death messages
+    pub climbing_pos: AtomicCell<Option<BlockPos>>,
+    water_movement_speed_multiplier: f32,
 }
 impl LivingEntity {
     pub fn new(entity: Entity) -> Self {
+        let water_movement_speed_multiplier = if entity.entity_type == EntityType::POLAR_BEAR {
+            0.98
+        } else if entity.entity_type == EntityType::SKELETON_HORSE {
+            0.96
+        } else {
+            0.8
+        };
         Self {
             entity,
             time_until_regen: AtomicI32::new(0),
@@ -56,6 +69,10 @@ impl LivingEntity {
             death_time: AtomicU8::new(0),
             active_effects: Mutex::new(HashMap::new()),
             entity_equipment: Arc::new(Mutex::new(EntityEquipment::new())),
+            jumping: AtomicBool::new(false),
+            climbing: AtomicBool::new(false),
+            climbing_pos: AtomicCell::new(None),
+            water_movement_speed_multiplier,
         }
     }
 
@@ -302,49 +319,100 @@ impl LivingEntity {
         }
     }
 
-    async fn tick_movement(&self, caller: Arc<dyn EntityBase>) {
+    async fn tick_movement(&self, caller: Arc<dyn EntityBase>, player: Option<Arc<Player>>) {
+        let movement_speed = self.movement_speed.load();
+        let off_ground_speed = if let Some(p) = player {
+            player.get_off_ground_speed()
+        } else {
+            // TODO: If the passenger is a player, ogs = movement_speed * 0.1
+            0.02
+        };
+        let should_swim_in_fluids = if let Some(p) = player {
+            if p.abilities.flying {
+                false
+            } else {
+                true
+            }
+        } else {
+            true
+        };
+        let can_walk_on_fluid = if self.entity.entity_type = EntityType::STRIDER {
+            true
+        } else {
+            false
+        };
+
         self.entity.check_zero_velo();
         let mut movement_input = self.movement_input.load();
         movement_input.x *= 0.98;
         movement_input.z *= 0.98;
         self.movement_input.store(movement_input);
+        // TODO: Tick AI
+
+        if self.jumping.load(Ordering::Relaxed) && should_swim_in_fluids {
+            let in_lava = self.entity.touching_lava.load(Ordering::Relaxed);
+            let in_water = self.entity.touching_water.load(Ordering::Relaxed);
+            let fluid_height = if in_lava {
+                self.lava_height.load()
+            } else {
+                self.water_height.load()
+            };
+            let swim_height = self.get_swim_height();
+            let on_ground = self.entity.on_ground.load(Ordering::Relaxed);
+            if (in_water || in_lava) && (!on_ground || fluid_height > swim_height) {
+                self.swim_upward();
+            } else if (on_ground || in_water && fluid_height <= swim_height) && self.jumping_cooldown.load(Ordering::Relaxed) == 0 {
+                self.jump();
+                self.jumping_cooldown.store(10, Ordering::Relaxed);
+            }
+        } else {
+            self.jumping_cooldown.fetch_sub(1, Ordering::Relaxed);
+        }
 
         if self.has_effect(EffectType::SLOW_FALLING) || self.has_effect(EffectType::LEVITATION) {
             self.fall_distance.store(0.0);
         }
 
-        if self.entity.in_water() || self.entity.in_lava() {
-            self.travel_in_fluid();
+        let touching_water = self.entity.touching_water.load(Ordering::Relaxed);
+        if (touching_water || self.entity.touching_lava.load(Ordering::Relaxed)) && should_swim_in_fluids && !can_walk_on_fluid {
+            self.travel_in_fluid(touching_water);
         } else {
-            self.travel_in_air(&caller);
+            // TODO: Gliding
+            self.travel_in_air(
+                movement_speed,
+                off_ground_speed
+            );
         }
         Entity::tick_block_underneath(caller).await;
         let suffocating = self.entity.check_block_collisions();
         if suffocating {
             self.damage(1.0, DamageType::IN_WALL).await;
         }
-        self.entity.move_entity(self.entity.velocity.load()).await;
     }
-    async fn travel_in_air(&self, caller: &Arc<dyn EntityBase>) {
+
+    // movement_speed and off_ground_speed are different for a Player
+    async fn travel_in_air(&self, movement_speed: f64, off_ground_speed: f64) {
         // applyMovementInput
         let (speed, friction) = if self.entity.on_ground.load(Ordering::Relaxed) {
             // getVelocityAffectingPos
             let pos_affecting_velo = self.entity.get_pos_with_y_offset(0.500001);
             let world = self.entity.world.read().await;
             let slipperiness = world.get_block(&pos_affecting_velo).await.slipperiness as f64;
-            let speed = caller.get_movement_speed() * 0.216 / (slipperiness * slipperiness * slipperiness);
+            let speed = movement_speed * 0.216 / (slipperiness * slipperiness * slipperiness);
             (speed, slipperiness * 0.91)
         } else {
-            let speed = caller.get_off_ground_speed();
+            let speed = off_ground_speed;
         };
-        let final_input = self.entity.movement_input_to_velocity(self.movement_input.load(), speed);
-        self.entity.velocity.store(self.entity.velocity.load() + final_input);
-        // TODO: Apply climbing speed
+        self.entity.update_velocity_from_input(movement_input, speed);
+        self.apply_climbing_speed();
 
-        self.entity.move_entity(self.entity.velocity.load());
+        self.make_move().await;
 
         let mut velo = self.entity.velocity.load();
-        // TODO: If climbing or in powder snow and can walk on it, velo.y = 0.2
+        // TODO: Add powdered snow
+        if (self.entity.horizontal_collision.load(Ordering::Relaxed) || self.jumping.load(Ordering::Relaxed)) && (self.climbing.load(Ordering::Relaxed)) {
+            velo.y = 0.2;
+        }
         let levitation = self.get_effect(EffectType::LEVITATION).await;
         if let Some(lev) = levitation {
             velo.y += 0.05 * (lev.amplifier + 1);
@@ -353,7 +421,7 @@ impl LivingEntity {
             // TODO: If world is not loaded: replace effective gravity with:
             // if below world's bottom y, 0.1, else 0.0
         }
-        // If no drag: return
+        // If entity has no drag: store velo and return
 
         velo.x *= friction;
         velo.z *= friction;
@@ -361,10 +429,208 @@ impl LivingEntity {
         velo.y *= 0.98;
         self.entity.velocity.store(velo);
     }
-    async fn travel_in_fluid(&self) {
+
+    // movement_speed is different for Player
+    async fn travel_in_fluid(&self, water: bool, movement_speed: f64) {
         let movement_input = self.movement_input.load();
-        todo!()
+        let y0 = self.pos.load().y;
+        let falling = self.velocity.load().y <= 0.0;
+        let gravity = self.get_effective_gravity();
+        if water {
+            let mut friction = if self.entity.sprinting.load(Ordering::Relaxed) {
+                0.9
+            } else {
+                self.water_movement_speed_multiplier
+            };
+            let mut speed = 0.02;
+            let water_movement_efficiency = 0.0; // TODO: Entity attribute
+            if water_movement_efficiency > 0.0 {
+                if !self.entity.on_ground.load(Ordering::Relaxed) {
+                    water_movement_efficiency *= 0.5;
+                }
+                friction += (0.54600006 - friction) * water_movement_efficiency;
+                speed += (movement_speed - speed) * water_movement_efficiency;
+            }
+            if self.has_effect(EffectType::DOLPHINS_GRACE) {
+                friction = 0.96;
+            }
+
+            self.entity.update_velocity_from_input(self.movement_input.load(), speed);
+            self.make_move().await;
+
+            let mut velo = self.entity.velocity.load();
+            if self.entity.horizontal_collision.load(Ordering::Relaxed) && self.climbing.load(Ordering::Relaxed) {
+                velo.y = 0.2;
+            }
+            velo = velo.multiply(friction, 0.8, friction);
+            self.apply_fluid_moving_speed(&mut velo.y, gravity, falling);
+            self.entity.velocity.store(velo);
+
+        } else {
+            self.entity.update_velocity_from_input(self.movement_input.load(), 0.02);
+            self.make_move().await;
+
+            let mut velo = self.velocity.load();
+            if self.lava_height.load() <= self.get_swim_height() {
+                velo.x *= 0.5;
+                velo.z *= 0.5;
+                velo.y *= 0.8;
+                self.apply_fluid_moving_speed(&mut velo.y, gravity, falling);
+            } else {
+                velo = velo * 0.5;
+            }
+            if gravity != 0.0 {
+                velo.y -= gravity / 4.0; // Negative gravity = buoyancy
+            }
+            self.entity.velocity.store(velo);
+        }
+        let mut velo = self.entity.velocity.load();
+        velo.y += 0.6 - self.entity.pos.load().y + y0;
+        if self.entity.horizontal_collision.load(Ordering::Relaxed) && !self
+            .entity
+            .world
+            .read()
+            .await
+            .check_fluid_collision(self.bounding_box.load().shift(velo))
+            .await
+        {
+            velo.y = 0.3;
+            self.entity.velocity.store(velo);
+        }
     }
+
+    fn apply_fluid_moving_speed(&self, dy: &mut f64, gravity: f64, falling: bool) {
+        if gravity != 0.0 && !self.entity.sprinting.load(Ordering::Relaxed) {
+            if falling && (dy - 0.005).abs() >= 0.003 && (dy - gravity / 16.0).abs() < 0.003 {
+                dy = -0.003;
+            } else {
+                dy -= gravity / 16.0;
+            }
+        }
+    }
+
+    async fn make_move(&self) {
+        self.entity.move_velo().await;
+        self.check_climbing().await;
+    }
+
+    async fn check_climbing(&self) {
+        // If spectator: return false
+        let mut pos = self.entity.block_pos();
+        let world = self.entity.world.read().await;
+
+        let (block, state) = world.get_block_and_block_state(&pos).await;
+        let props = block.properties(state.id).to_props();
+        let climbable = Block::has_properties::<block_properties::LadderLikeProperties>::(&props)
+            || Block::has_properties::<block_properties::ScaffoldingLikeProperties>::(&props)
+            || Block::has_properties::<block_properties::CaveVinesLikeProperties>::(&props)
+            || Block::has_properties::<block_properties::CaveVinesPlantLikeProperties>::(&props);
+        if climbable {
+            self.climbing.store(true, Ordering::Relaxed);
+            self.climbing_pos.store(Some(pos));
+            return;
+        } else if Block::has_properties::<block_properties::OakTrapdoorLikeProperties>::(&props) && props.iter().find(|name, value| name == "open" && value == true.to_string()).is_some() {
+            pos.y -= 1;
+            let (down_block, down_state) = world.get_block_and_block_state(&pos).await;
+            let down_props = down_block.properties(down_state.id).to_props();
+            if Block::has_properties::<block_properties::LadderLikeProperties>::(&down_props) {
+                if let (Some(up_value), Some(down_value)) = (props.iter().find_map(|name, value| (name == "facing").then_some(value)), down_props.iter().find_map(|name, value| (name == "facing").then_some(value))) {
+                    if up_value == down_value {
+                        self.climbing.store(true, Ordering::Relaxed);
+                        self.climbing_pos.store(Some(pos));
+                        return;
+                    }
+                }
+            }
+        }
+        self.climbing.store(false, Ordering::Relaxed);
+        if self.entity.on_ground.load(Ordering::Relaxed) {
+            self.climbing_pos.store(None);
+        }
+    }
+
+    fn apply_climbing_speed(&self) {
+        if self.climbing.load(Ordering::Relaxed) {
+            self.fall_distance.store(0.0);
+            let mut velo = self.entity.velocity.load();
+
+            let f = 0.15;
+            if velo.x < -0.15 {
+                velo.x = -0.15;
+            } else if velo.x > 0.15 {
+                velo.x = 0.15;
+            }
+            if velo.z < -0.15 {
+                velo.z = -0.15;
+            } else if velo.z > 0.15 {
+                velo.z = 0.15;
+            }
+            velo.y = velo.y.max(-0.15);
+
+            /* This only applies to players
+            if velo.y < 0.0 {
+                let (block, state) = self.entity.world.read().await.get_block_and_block_state(&self.block_pos.load());
+                let props = block.properties(state.id);
+                if self.entity.sneaking.load(Ordering::Relaxed) && Block::has_properties::<block_properties::ScaffoldingLikeProperties>::() {
+                    velo.y = 0.0;
+                }
+            }
+            */
+        }
+    }
+
+    pub fn get_swim_height(&self) -> f64 {
+        if self.entity.entity_type = EntityType::BREEZE {
+            self.standing_eye_height as f64
+        } else
+            if self.standing_eye_height < 0.4 {
+                0.0
+            } else {
+                0.4
+            }
+        }
+    }
+    fn swim_upward(&self) {
+        let mut velo = self.entity.velocity.load();
+        velo.y = 0.04;
+        self.entity.velocity.store(velo);
+    }
+    async fn jump(&self) {
+        let jump = self.get_jump_velocity(1.0).await;
+        if jump <= 1.0e-5 {
+            return;
+        }
+        let mut velo = self.entity.velocity.load();
+        velo.y = jump.max(velo.y);
+        if self.entity.sprinting.load(Ordering::Relaxed) {
+            let yaw = self.entity.yaw.load() * std::f32::consts::PI / 180.0;
+            velo.x += -yaw.sin() * 0.2;
+            velo.y += yaw.cos() * 0.2;
+        }
+        self.entity.velocity.store(velo);
+        // Todo? VelocityDirty = true
+    }
+    async fn get_jump_velocity(&self, mut strength: f64) -> f64 {
+        strength *= 1.0; // TODO: Entity Attribute jump strength
+        let block_multiplier = {
+            // TODO: getJumpVelocityMultiplier for blocks
+            let block_pos = self.entity.block_pos.load();
+            let f = 1.0; // ^.multiplier
+            let pos_affecting_velo = self.entity.get_pos_with_y_offset(0.500001);
+            let g = 1.0; // ^.multiplier
+            if f == 1.0 {
+                g
+            } else {
+                f
+            }
+        };
+        strength *= block_multiplier;
+        if let Some(effect) = self.get_effect(EffectType::JUMP_BOOST).await {
+            strength += 0.1 * (effect.amplifier + 1) as f64;
+        }
+        strength
+    }
+    // TODO: Caching getBlockStateAtPos
 }
 
 #[async_trait]
@@ -405,13 +671,6 @@ impl EntityBase for LivingEntity {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         Some(self)
-    }
-    fn get_off_ground_speed(&self) -> f64 {
-        // TODO: If the passenger is a player, self.get_movement_speed() * 0.1
-        0.02
-    }
-    fn get_movement_speed(&self) -> f64 {
-        self.movement_speed.load()
     }
 }
 
