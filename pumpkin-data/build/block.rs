@@ -1405,6 +1405,24 @@ pub(crate) fn build() -> TokenStream {
                     _ => None
                 }
             }
+
+            pub fn has_properties<T>(&self) -> bool where T: BlockProperties {
+                let mut props_a = T::default().to_props().into_iter();
+                let mut props_b = self.properties(self.default_state_id).to_props().into_iter();
+                while let Some((name_a, _value_a)) = props_a.next() {
+                    if let Some((name_b, _value_b)) = props_b.next() {
+                        if name_a == name_b {
+                            continue;
+                        }
+                    }
+                    return false;
+                }
+                if let Some(_) = props_b.next() {
+                    false
+                } else {
+                    true
+                }
+            }
         }
 
         #(#properties)*

@@ -8,7 +8,7 @@ use player::Player;
 use pumpkin_data::{
     Block,
     block_properties::{
-        BlockProperties, CampfireLikeProperties, Facing, HorizontalFacing,
+        BlockProperties, Facing, HorizontalFacing
     },
     damage::DamageType,
     entity::{EntityPose, EntityType},
@@ -129,6 +129,16 @@ pub trait EntityBase: Send + Sync {
         entity.send_velocity().await;
 
         //entity.debug_loc().await;
+    }
+
+    // Only for LivingEntity and Player
+    fn get_off_ground_speed(&self) -> f64 {
+        unimplemented!()
+    }
+
+    // Only for LivingEntity and Player
+    fn get_movement_speed(&self) -> f64 {
+        unimplemented!()
     }
 }
 
@@ -978,7 +988,7 @@ impl Entity {
     There are two types of movement
     One through velocity, the other through one-time moves,
     like knockback.
-    The latter uses entity.tick_move() (to adjust for collisions)
+    The latter uses entity.move_entity() (to adjust for collisions)
     or entity.move_pos()
     */
     // travelMidAir in yarn
@@ -1008,11 +1018,6 @@ impl Entity {
         velo.y -= gravity;
         entity.velocity.store(velo);
 
-        let suffocating = Self::check_block_collisions(entity_base, server).await;
-        
-        let touching_water = entity.touching_water.load(Ordering::Relaxed);
-        let in_lava = entity.fire_ticks.load(Ordering::Relaxed) == 300;
-
         // TODO
         /*
         Change friction? Or drag?
@@ -1031,34 +1036,11 @@ impl Entity {
             velo.y = velo.y * 0.05;
         */
 
-        if suffocating {
-            if let Some(live) = living {
-                live.damage(1.0, DamageType::IN_WALL).await;
-            }
-        }
-
 
         let mut velo = entity.velocity.load();
 
         let mut friction = 0.91;
-        if entity.on_ground.load(Ordering::Relaxed) {
-            if let Some(supporting_block_pos) = entity.supporting_block_pos.load() {
-                let (block, state) = world
-                    .get_block_and_block_state(&supporting_block_pos)
-                    .await;
 
-                if let Some(live) = living {
-                    if block == Block::CAMPFIRE
-                        || block == Block::SOUL_CAMPFIRE
-                            && CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
-                    {
-                        let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
-                    }
-
-                    if block == Block::MAGMA_BLOCK {
-                        let _ = live.damage(1.0, DamageType::HOT_FLOOR).await;
-                    }
-                }
 
                 friction = 0.91 * f64::from(block.slipperiness);
             }
@@ -1073,6 +1055,29 @@ impl Entity {
         //Liquid flow pushing
 
         entity.velocity.store(velo);
+    }
+
+    async fn tick_block_underneath(entity_base: &Arc<dyn EntityBase>) {
+        let entity = entity_base.get_entity();
+        if entity.on_ground.load(Ordering::Relaxed) {
+            let landing_pos = entity.get_pos_with_y_offset(0.2);
+            let world = entity.world.read().await;
+            let (block, state) = world
+                .get_block_and_block_state(&supporting_block_pos)
+                .await;
+            if let Some(live) = living {
+                if block == Block::CAMPFIRE
+                    || block == Block::SOUL_CAMPFIRE
+                        && block_properties::CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
+                {
+                    let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
+                }
+
+                if block == Block::MAGMA_BLOCK {
+                    let _ = live.damage(1.0, DamageType::HOT_FLOOR).await;
+                }
+            }
+        }
     }
 
     // Returns whether the entity's eye level is in a wall
@@ -1239,7 +1244,7 @@ impl Entity {
     }
 
     async fn get_pos_with_y_offset(offset: f64) -> BlockPos {
-        if let Some(supporting_block) = self.supporting_block.load() {
+        if let Some(mut supporting_block) = self.supporting_block.load() {
             if offset > 1.0e-5 {
                 let (block, state) = self
                     .world
@@ -1247,12 +1252,40 @@ impl Entity {
                     .await
                     .get_block_and_block_state(supporting_block)
                     .await;
-                let properties = block.properties(state.id);
-                if offset <= 0.5 && supporting_block
+                if offset <= 0.5 && (block.has_properties::<block_properties::OakFenceLikeProperties>::() || block.has_properties::<block_properties::ResinBrickWallLikeProperties> || block.has_properties::<block_properties::OakFenceGateLikeProperties>::() && block.properties(state.id).iter().find(|(name, value)| name == "open" && value == true.to_string()).is_some()) {
+                    return supporting_block;
+                }
+                supporting_block.y = (self.pos.load().y - offset).floor() as i32;
+                return supporting_block;
             }
-        } else {
-            self.block_pos.load()
+            return supporting_block;
         }
+        let mut block_pos = self.block_pos.load();
+        block_pos.y = (self.pos.load().y - offset).floor() as i32;
+        block_pos;
+    }
+
+    // Entity.movementInputToVelocity in yarn
+    fn movement_input_to_velocity(&self, movement_input: f64, speed: f64) -> Vector3<f64> {
+        let yaw = self.yaw.load();
+        let dist = movement_input.length_squared();
+        if dist < 1.0e-7 {
+            return;
+        }
+        let lv = if dist > 1.0 {
+            movement_input.normalize()
+        } else {
+            movement_input.multiply(speed)
+        };
+        let h = (yaw * std::f32::consts::PI / 180.0).sin();
+        let i = (yaw * std::f32::consts::PI / 180.0).cos();
+
+        Vector3::new(
+            lv.x * i as f64 - lv.z * h as f64,
+            lv.y,
+            lv.z * i as f64 + lv.x * h as f64,
+        )
+
     }
 }
 

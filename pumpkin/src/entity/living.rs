@@ -43,6 +43,7 @@ pub struct LivingEntity {
     pub active_effects: Mutex<HashMap<EffectType, Effect>>,
     pub entity_equipment: Arc<Mutex<EntityEquipment>>,
     pub movement_input: AtomicCell<Vector3<f64>>,
+    pub movement_speed: AtomicCell<f64>,
 }
 impl LivingEntity {
     pub fn new(entity: Entity) -> Self {
@@ -301,7 +302,7 @@ impl LivingEntity {
         }
     }
 
-    async fn tick_movement(&self) {
+    async fn tick_movement(&self, caller: Arc<dyn EntityBase>) {
         self.entity.check_zero_velo();
         let mut movement_input = self.movement_input.load();
         movement_input.x *= 0.98;
@@ -315,17 +316,54 @@ impl LivingEntity {
         if self.entity.in_water() || self.entity.in_lava() {
             self.travel_in_fluid();
         } else {
-            self.travel_in_air();
+            self.travel_in_air(&caller);
         }
-        Entity::handle_physics(self, 0.08, server).await;
-        self.entity.tick_move(self.entity.velocity.load()).await;
+        Entity::tick_block_underneath(caller).await;
+        let suffocating = self.entity.check_block_collisions();
+        if suffocating {
+            self.damage(1.0, DamageType::IN_WALL).await;
+        }
+        self.entity.move_entity(self.entity.velocity.load()).await;
     }
-    async fn travel_in_air(&self) {
-        let movement_input = self.movement_input.load();
-        
+    async fn travel_in_air(&self, caller: &Arc<dyn EntityBase>) {
+        // applyMovementInput
+        let (speed, friction) = if self.entity.on_ground.load(Ordering::Relaxed) {
+            // getVelocityAffectingPos
+            let pos_affecting_velo = self.entity.get_pos_with_y_offset(0.500001);
+            let world = self.entity.world.read().await;
+            let slipperiness = world.get_block(&pos_affecting_velo).await.slipperiness as f64;
+            let speed = caller.get_movement_speed() * 0.216 / (slipperiness * slipperiness * slipperiness);
+            (speed, slipperiness * 0.91)
+        } else {
+            let speed = caller.get_off_ground_speed();
+        };
+        let final_input = self.entity.movement_input_to_velocity(self.movement_input.load(), speed);
+        self.entity.velocity.store(self.entity.velocity.load() + final_input);
+        // TODO: Apply climbing speed
+
+        self.entity.move_entity(self.entity.velocity.load());
+
+        let mut velo = self.entity.velocity.load();
+        // TODO: If climbing or in powder snow and can walk on it, velo.y = 0.2
+        let levitation = self.get_effect(EffectType::LEVITATION).await;
+        if let Some(lev) = levitation {
+            velo.y += 0.05 * (lev.amplifier + 1);
+        } else {
+            velo.y -= self.get_effective_gravity();
+            // TODO: If world is not loaded: replace effective gravity with:
+            // if below world's bottom y, 0.1, else 0.0
+        }
+        // If no drag: return
+
+        velo.x *= friction;
+        velo.z *= friction;
+        // If flutterer: multiply y by friction instead of 0.98
+        velo.y *= 0.98;
+        self.entity.velocity.store(velo);
     }
     async fn travel_in_fluid(&self) {
         let movement_input = self.movement_input.load();
+        todo!()
     }
 }
 
@@ -336,7 +374,7 @@ impl EntityBase for LivingEntity {
         self.entity.tick(caller, server).await;
         self.base_tick().await;
 
-        self.tick_movement().await;
+        self.tick_movement(caller).await;
     }
 
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {
@@ -367,6 +405,13 @@ impl EntityBase for LivingEntity {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         Some(self)
+    }
+    fn get_off_ground_speed(&self) -> f64 {
+        // TODO: If the passenger is a player, self.get_movement_speed() * 0.1
+        0.02
+    }
+    fn get_movement_speed(&self) -> f64 {
+        self.movement_speed.load()
     }
 }
 
