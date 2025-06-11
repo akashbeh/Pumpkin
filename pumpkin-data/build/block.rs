@@ -321,6 +321,10 @@ impl ToTokens for BlockPropertyStruct {
                     }
                     block_props
                 }
+
+                fn name_static() -> String {
+                    "#name".to_string()
+                }
             }
         });
     }
@@ -1328,6 +1332,12 @@ pub(crate) fn build() -> TokenStream {
 
             // Convert properties to a block state, and add them onto the default state.
             fn from_props(props: Vec<(&str, &str)>, block: &Block) -> Self where Self: Sized;
+
+            fn name_static() -> String where Self: Sized;
+
+            fn name(&self) -> String where Self: Sized {
+                Self::name_static()
+            }
         }
 
         pub trait EnumVariants {
@@ -1403,24 +1413,6 @@ pub(crate) fn build() -> TokenStream {
                 match self.id {
                     #block_properties_from_props_and_name
                     _ => None
-                }
-            }
-
-            pub fn has_properties<T>(self_properties: &Vec<(String, String)>) -> bool where T: BlockProperties {
-                let mut props_a = T::default().to_props().iter();
-                let mut props_b = self_properties.iter();
-                while let Some((name_a, _value_a)) = props_a.next() {
-                    if let Some((name_b, _value_b)) = props_b.next() {
-                        if name_a == name_b {
-                            continue;
-                        }
-                    }
-                    return false;
-                }
-                if let Some(_) = props_b.next() {
-                    false
-                } else {
-                    true
                 }
             }
         }

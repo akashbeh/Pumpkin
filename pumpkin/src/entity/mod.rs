@@ -8,10 +8,12 @@ use player::Player;
 use pumpkin_data::{
     Block,
     block_properties::{
-        BlockProperties, Facing, HorizontalFacing
+        BlockProperties, CampfireLikeProperties, Facing, HorizontalFacing,
+        OakFenceGateLikeProperties
     },
     damage::DamageType,
     entity::{EntityPose, EntityType},
+    fluid::Fluid,
     sound::{Sound, SoundCategory},
 };
 use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
@@ -34,6 +36,7 @@ use pumpkin_util::math::{
 };
 use pumpkin_world::item::ItemStack;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::{
     Arc,
     atomic::{
@@ -105,9 +108,10 @@ pub trait EntityBase: Send + Sync {
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
 
-    async fn move_velo(&self) {
-        self.move_entity(self.velocity.load()).await;
+    fn is_pushed_by_fluids(&self) -> bool {
+        true
     }
+
     // Move by a delta, adjust for collisions, and send
     // TODO: MovementType for pistons etc
     async fn move_entity(&self, mut motion: Vector3<f64>) {
@@ -120,7 +124,7 @@ pub trait EntityBase: Send + Sync {
         entity.velocity.store(final_move);
 
         if let Some(live) = living {
-            live.update_fall_distance(final_move.y, on_ground, false)
+            live.update_fall_distance(final_move.y, entity.on_ground.load(Ordering::Relaxed), false)
                 .await;
         }
 
@@ -169,11 +173,11 @@ pub struct Entity {
     /// Indicates whether the entity is touching water
     pub touching_water: AtomicBool,
     /// Indicates the fluid height
-    pub water_height: AtomicCell<Option<f64>>,
+    pub water_height: AtomicCell<f64>,
     /// Indicates whether the entity is touching lava
     pub touching_lava: AtomicBool,
     /// Indicates the fluid height
-    pub lava_height: AtomicCell<Option<f64>>,
+    pub lava_height: AtomicCell<f64>,
     /// The entity's yaw rotation (horizontal rotation) ← →
     pub yaw: AtomicCell<f32>,
     /// The entity's head yaw rotation (horizontal rotation of the head)
@@ -986,8 +990,7 @@ impl Entity {
     The latter uses entity.move_entity() (to adjust for collisions)
     or entity.move_pos()
     */
-    // travelMidAir in yarn
-    // travelInAir in PaperMC
+    /*
     async fn handle_physics(
         entity_base: &dyn EntityBase,
         gravity: f64,
@@ -1051,19 +1054,20 @@ impl Entity {
 
         entity.velocity.store(velo);
     }
+    */
 
-    async fn tick_block_underneath(entity_base: &Arc<dyn EntityBase>) {
-        let entity = entity_base.get_entity();
-        if entity.on_ground.load(Ordering::Relaxed) {
-            let landing_pos = entity.get_pos_with_y_offset(0.2);
-            let world = entity.world.read().await;
+    async fn tick_block_underneath(&self, caller: &Arc<dyn EntityBase>) {
+        let living = caller.get_living_entity();
+        if self.on_ground.load(Ordering::Relaxed) {
+            let landing_pos = self.get_pos_with_y_offset(0.2);
+            let world = self.world.read().await;
             let (block, state) = world
-                .get_block_and_block_state(&supporting_block_pos)
+                .get_block_and_block_state(&landing_pos)
                 .await;
             if let Some(live) = living {
                 if block == Block::CAMPFIRE
                     || block == Block::SOUL_CAMPFIRE
-                        && block_properties::CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
+                        && CampfireLikeProperties::from_state_id(state.id, &block).r#signal_fire
                 {
                     let _ = live.damage(1.0, DamageType::CAMPFIRE).await;
                 }
@@ -1073,22 +1077,22 @@ impl Entity {
                 }
             }
         }
+        // TODO in full
     }
 
     // Returns whether the entity's eye level is in a wall
-    async fn check_block_collisions(entity_base: &dyn EntityBase, server: &Server) -> bool {
-        let entity = entity_base.get_entity();
-        let bounding_box = entity.bounding_box.load();
+    async fn check_block_collisions(&self, caller: &Arc<dyn EntityBase>, server: &Server) -> bool {
+        let bounding_box = self.bounding_box.load();
 
         let mut suffocating = false;
 
         let aabb = bounding_box.expand(-0.001, -0.001, -0.001);
         let min = aabb.min_block_pos();
         let max = aabb.max_block_pos();
-        let world = entity.world.read().await;
+        let world = self.world.read().await;
 
         let mut eye_level_box = aabb;
-        let eye_height = f64::from(entity.standing_eye_height);
+        let eye_height = f64::from(self.standing_eye_height);
         eye_level_box.min.y = eye_height;
         eye_level_box.max.y = eye_height;
 
@@ -1108,7 +1112,7 @@ impl Entity {
                     if collided {
                         world
                             .block_registry
-                            .on_entity_collision(block, &world, entity_base, pos, state, server)
+                            .on_entity_collision(block, &world, caller, pos, state, server)
                             .await;
                     }
                 }
@@ -1118,8 +1122,8 @@ impl Entity {
     }
 
     // updateWaterState() in yarn
-    async fn update_fluid_state(entity_base: &dyn EntityBase, server: &Server) -> bool {
-        let is_pushed = entity_base.is_pushed_by_fluids();
+    async fn update_fluid_state(&self, caller: &Arc<dyn EntityBase>, server: &Server) -> bool {
+        let is_pushed = caller.is_pushed_by_fluids();
         let mut fluids = HashMap::new();
 
         let water_push = Vector3::default();
@@ -1132,11 +1136,10 @@ impl Entity {
         let mut in_fluid = [false, false];
         let mut fluid_height = [0.0, 0.0];
 
-        let entity = entity_base.get_entity();
-        let bounding_box = entity.bounding_box.load().expand(-0.001, -0.001, -0.001);
+        let bounding_box = self.bounding_box.load().expand(-0.001, -0.001, -0.001);
         let min = bounding_box.min_block_pos();
         let max = bounding_box.max_block_pos();
-        let world = entity.world.read().await;
+        let world = self.world.read().await;
 
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
@@ -1174,66 +1177,66 @@ impl Entity {
         for fluid in fluids.values().iter() {
             world
                 .fluid_registry
-                .on_entity_collision_fluid(fluid, entity_base)
+                .on_entity_collision_fluid(fluid, Arc::clone(caller))
                 .await;
         }
 
-        let lava_speed = if self.world.read().await.dimension_type == DimensionType::TheNether {
+        let lava_speed = if self.world.read().await.dimension_type == pumpkin_registry::DimensionType::TheNether {
             0.007
         } else {
             0.002333333
         };
-        entity.push_by_fluid(0.014, fluid_push[0], fluid_n[0]);
-        entity.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
+        self.push_by_fluid(0.014, fluid_push[0], fluid_n[0]);
+        self.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
 
         let water_height = fluid_height[0];
         let in_water = in_fluid[0];
-        let was_in_water = entity.touching_water.load(Ordering::Relaxed);
+        let was_in_water = self.touching_water.load(Ordering::Relaxed);
         if in_water {
-            if let Some(living) = entity.get_living_entity() {
+            if let Some(living) = caller.get_living_entity() {
                 living.fall_distance.store(0.0);
             }
             if !was_in_water {
                 // TODO: Spawn splash particles
             }
         }
-        entity.water_height.store(water_height);
-        entity.touching_water.store(in_water, Ordering::Relaxed);
+        self.water_height.store(water_height);
+        self.touching_water.store(in_water, Ordering::Relaxed);
 
         let lava_height = fluid_height[1];
         let in_lava = in_fluid[1];
         if in_lava {
-            if let Some(living) = entity.get_living_entity() {
+            if let Some(living) = caller.get_living_entity() {
                 let halved_fall = living.fall_distance.load() / 2.0;
                 if halved_fall != 0.0 {
                     living.fall_distance.store(halved_fall);
                 }
             }
         }
-        entity.lava_height.store(lava_height);
-        entity.touching_lava.store(in_lava, Ordering::Relaxed);
+        self.lava_height.store(lava_height);
+        self.touching_lava.store(in_lava, Ordering::Relaxed);
     }
 
     fn push_by_fluid(&self, speed: f64, mut push: Vector3<f64>, n: f64) {
         if push.length_squared() != 0.0 {
-            if n > 0 {
-                push = push.multiply(1.0 / n.into());
+            if n > 0.0 {
+                push = push * (1.0 / n.into());
             }
             if self.entity_type != EntityType::PLAYER {
                 push = push.normalize();
             }
-            push = push.multiply(speed);
+            push = push * speed;
 
             let mut velo = self.velocity.load();
             let g = 0.003;
-            if velo.x.abs() < g && velo.z.abs() < g && velo.length < 0.0045 {
-                push = push.normalize().multiply(0.0045);
+            if velo.x.abs() < g && velo.z.abs() < g && velo.length_squared() < 0.00002025 {
+                push = push.normalize() * 0.0045;
             }
             self.velocity.store(velo);
         }
     }
 
-    async fn get_pos_with_y_offset(offset: f64) -> BlockPos {
+    async fn get_pos_with_y_offset(&self, offset: f64) -> BlockPos {
         if let Some(mut supporting_block) = self.supporting_block.load() {
             if offset > 1.0e-5 {
                 let (block, state) = self
@@ -1242,8 +1245,11 @@ impl Entity {
                     .await
                     .get_block_and_block_state(supporting_block)
                     .await;
-                let props = block.properties(state.id).to_props();
-                if offset <= 0.5 && (Block::has_properties::<block_properties::OakFenceLikeProperties>::(&props) || Block::has_properties::<block_properties::ResinBrickWallLikeProperties>::(&props) || Block::has_properties::<block_properties::OakFenceGateLikeProperties>::(&props) && props.iter().find(|name, value| name == "open" && value == true.to_string()).is_some() {
+                let props = block.properties(state.id);
+                if offset <= 0.5 && (
+                    props.name() == "OakFenceLikeProperties" ||
+                    props.name() == "ResinBrickWallLikeProperties" ||
+                    props.name() == "OakFenceGateLikeProperties" && block_properties::OakFenceGateLikeProperties::from_state_id(state.id).r#open) {
                     return supporting_block;
                 }
                 supporting_block.y = (self.pos.load().y - offset).floor() as i32;
@@ -1253,13 +1259,13 @@ impl Entity {
         }
         let mut block_pos = self.block_pos.load();
         block_pos.y = (self.pos.load().y - offset).floor() as i32;
-        block_pos;
+        block_pos
     }
 
     // Entity.updateVelocity in yarn
     fn update_velocity_from_input(&self, movement_input: Vector3<f64>, speed: f64) {
-        let final_input = self.entity.movement_input_to_velocity(movement_input, speed);
-        self.entity.velocity.store(self.entity.velocity.load() + final_input);
+        let final_input = self.movement_input_to_velocity(movement_input, speed);
+        self.velocity.store(self.velocity.load() + final_input);
     }
 
     // Entity.movementInputToVelocity in yarn
@@ -1267,12 +1273,12 @@ impl Entity {
         let yaw = self.yaw.load();
         let dist = movement_input.length_squared();
         if dist < 1.0e-7 {
-            return;
+            return Vector3::default();
         }
         let lv = if dist > 1.0 {
             movement_input.normalize()
         } else {
-            movement_input.multiply(speed)
+            movement_input * speed
         };
         let h = (yaw * std::f32::consts::PI / 180.0).sin();
         let i = (yaw * std::f32::consts::PI / 180.0).cos();
@@ -1331,10 +1337,6 @@ impl EntityBase for Entity {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         None
-    }
-
-    fn is_pushed_by_fluids(&self) -> bool {
-        true
     }
 }
 

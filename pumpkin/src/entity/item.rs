@@ -79,7 +79,8 @@ impl EntityBase for ItemEntity {
         self.entity.tick(caller, server).await;
 
         // TODO: Vanilla order of operations
-        Entity::handle_physics(self, 0.04, server).await;
+        todo!();
+        //Entity::handle_physics(self, 0.04, server).await;
         self.move_entity(self.entity.velocity.load()).await;
 
         self.base_tick().await;
