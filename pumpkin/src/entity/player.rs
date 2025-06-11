@@ -1710,6 +1710,31 @@ impl Player {
             screen_handler.send_content_updates().await;
         }
     }
+
+    pub async fn get_off_ground_speed(&self) -> f64 {
+        let sprinting = self.get_entity().sprinting.load(Ordering::Relaxed);
+        let fly_speed = {
+            let abilities = self.abilities.lock().await;
+            abilities.flying.then(abilities.fly_speed as f64)
+        };
+        if let Some(flying) = fly_speed { // TODO: && Not in a vehicle
+            if sprinting {
+                flying * 2.0
+            } else {
+                flying
+            }
+        } else {
+            if sprinting {
+                0.025999999
+            } else {
+                0.02
+            }
+        }
+    }
+    pub async fn is_flying(&self) -> bool {
+        let abilities = self.abilities.lock().await;
+        abilities.flying
+    }
 }
 
 #[async_trait]

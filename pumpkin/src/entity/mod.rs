@@ -1059,7 +1059,7 @@ impl Entity {
     async fn tick_block_underneath(&self, caller: &Arc<dyn EntityBase>) {
         let living = caller.get_living_entity();
         if self.on_ground.load(Ordering::Relaxed) {
-            let landing_pos = self.get_pos_with_y_offset(0.2);
+            let landing_pos = self.get_pos_with_y_offset(0.2).await;
             let world = self.world.read().await;
             let (block, state) = world
                 .get_block_and_block_state(&landing_pos)
@@ -1112,7 +1112,7 @@ impl Entity {
                     if collided {
                         world
                             .block_registry
-                            .on_entity_collision(block, &world, caller, pos, state, server)
+                            .on_entity_collision(block, &world, &caller, pos, state, server)
                             .await;
                     }
                 }
@@ -1122,8 +1122,8 @@ impl Entity {
     }
 
     // updateWaterState() in yarn
-    async fn update_fluid_state(&self, caller: &Arc<dyn EntityBase>, server: &Server) -> bool {
-        let is_pushed = caller.is_pushed_by_fluids();
+    async fn update_fluid_state(&self, caller: &Arc<dyn EntityBase>, server: &Server) {
+        let is_pushed = *caller.is_pushed_by_fluids();
         let mut fluids = HashMap::new();
 
         let water_push = Vector3::default();
@@ -1146,7 +1146,11 @@ impl Entity {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     if let Ok(fluid) = world.get_fluid(&pos).await {
-                        let collision_shape = todo!(); // .at_pos();
+                        let level = todo!();
+                        let collision_shape = BoundingBox {
+                            min: Vector3::default(),
+                            max: Vector3::new(1.0, level, 1.0),
+                        }.shift(pos).to_f64();
                         if collision_shape.intersects(bounding_box) {
                             fluids.insert(fluid.id, fluid);
 
@@ -1164,9 +1168,9 @@ impl Entity {
 
                             let fluid_velo: Vector3<f64> = todo!();
                             if fluid_height[i] < 0.4 {
-                                fluid_velo = fluid_velo.multiply(fluid_height[i]);
+                                fluid_velo = fluid_velo * fluid_height[i];
                             }
-                            fluid_push[i] = fluid_push[i].add(fluid_velo);
+                            fluid_push[i] = fluid_push[i] + fluid_velo;
                             fluid_n[i] += 1;
                         }
                     }
@@ -1174,10 +1178,10 @@ impl Entity {
             }
         }
 
-        for fluid in fluids.values().iter() {
+        for (_, fluid) in fluids.iter() {
             world
-                .fluid_registry
-                .on_entity_collision_fluid(fluid, Arc::clone(caller))
+                .block_registry
+                .on_entity_collision_fluid(fluid, &caller)
                 .await;
         }
 
@@ -1217,10 +1221,10 @@ impl Entity {
         self.touching_lava.store(in_lava, Ordering::Relaxed);
     }
 
-    fn push_by_fluid(&self, speed: f64, mut push: Vector3<f64>, n: f64) {
+    fn push_by_fluid(&self, speed: f64, mut push: Vector3<f64>, n: usize) {
         if push.length_squared() != 0.0 {
-            if n > 0.0 {
-                push = push * (1.0 / n.into());
+            if n > 0 {
+                push = push * (1.0 / n as f64);
             }
             if self.entity_type != EntityType::PLAYER {
                 push = push.normalize();
@@ -1237,28 +1241,29 @@ impl Entity {
     }
 
     async fn get_pos_with_y_offset(&self, offset: f64) -> BlockPos {
-        if let Some(mut supporting_block) = self.supporting_block.load() {
+        if let Some(mut supporting_block) = self.supporting_block_pos.load() {
             if offset > 1.0e-5 {
                 let (block, state) = self
                     .world
                     .read()
                     .await
-                    .get_block_and_block_state(supporting_block)
+                    .get_block_and_block_state(&supporting_block)
                     .await;
-                let props = block.properties(state.id);
-                if offset <= 0.5 && (
-                    props.name() == "OakFenceLikeProperties" ||
-                    props.name() == "ResinBrickWallLikeProperties" ||
-                    props.name() == "OakFenceGateLikeProperties" && block_properties::OakFenceGateLikeProperties::from_state_id(state.id).r#open) {
-                    return supporting_block;
+                if let Some(props) = block.properties(state.id) {
+                    let name = props.name();
+                    if offset <= 0.5 && (name == "OakFenceLikeProperties" ||
+                    name == "ResinBrickWallLikeProperties" ||
+                    name == "OakFenceGateLikeProperties" && OakFenceGateLikeProperties::from_state_id(state.id).r#open) {
+                        return supporting_block;
+                    }
                 }
-                supporting_block.y = (self.pos.load().y - offset).floor() as i32;
+                supporting_block.0.y = (self.pos.load().y - offset).floor() as i32;
                 return supporting_block;
             }
             return supporting_block;
         }
         let mut block_pos = self.block_pos.load();
-        block_pos.y = (self.pos.load().y - offset).floor() as i32;
+        block_pos.0.y = (self.pos.load().y - offset).floor() as i32;
         block_pos
     }
 
@@ -1297,9 +1302,9 @@ impl EntityBase for Entity {
         false
     }
 
-    async fn tick(&self, caller: Arc<dyn EntityBase>, _server: &Server) {
+    async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
         self.tick_portal(&caller).await;
-        self.update_fluid_state().await;
+        self.update_fluid_state(&caller, server).await;
         let fire_ticks = self.fire_ticks.load(Ordering::Relaxed);
         if fire_ticks > 0 {
             if self.entity_type.fire_immune {

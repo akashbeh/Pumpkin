@@ -11,7 +11,7 @@ use crossbeam::atomic::AtomicCell;
 use pumpkin_config::advanced_config;
 use pumpkin_data::entity::{EffectType, EntityStatus};
 use pumpkin_data::{block_properties::{
-    BlockProperties
+    BlockProperties,
     LadderLikeProperties,
     OakTrapdoorLikeProperties,
 }, damage::DamageType, sound::Sound, entity::EntityType};
@@ -79,6 +79,8 @@ impl LivingEntity {
             climbing: AtomicBool::new(false),
             climbing_pos: AtomicCell::new(None),
             water_movement_speed_multiplier,
+            movement_input: AtomicCell::new(Vector3::default()),
+            movement_speed: AtomicCell::new(0.0),
         }
     }
 
@@ -330,14 +332,14 @@ impl LivingEntity {
             self.jumping_cooldown.fetch_sub(1, Relaxed);
         }
         let movement_speed = self.movement_speed.load();
-        let off_ground_speed = if let Some(p) = player {
-            player.get_off_ground_speed()
+        let off_ground_speed = if let Some(ref p) = player {
+            p.get_off_ground_speed().await
         } else {
             // TODO: If the passenger is a player, ogs = movement_speed * 0.1
             0.02
         };
-        let should_swim_in_fluids = if let Some(p) = player {
-            if p.abilities.flying {
+        let should_swim_in_fluids = if let Some(ref p) = player {
+            if p.is_flying().await {
                 false
             } else {
                 true
@@ -393,7 +395,7 @@ impl LivingEntity {
             );
         }
         self.entity.tick_block_underneath(&caller).await;
-        let suffocating = self.entity.check_block_collisions(caller, server).await;
+        let suffocating = self.entity.check_block_collisions(&caller, server).await;
         if suffocating {
             self.damage(1.0, DamageType::IN_WALL).await;
         }
@@ -453,7 +455,7 @@ impl LivingEntity {
                 self.water_movement_speed_multiplier as f64
             };
             let mut speed = 0.02;
-            let water_movement_efficiency = 0.0; // TODO: Entity attribute
+            let mut water_movement_efficiency = 0.0; // TODO: Entity attribute
             if water_movement_efficiency > 0.0 {
                 if !self.entity.on_ground.load(Relaxed) {
                     water_movement_efficiency *= 0.5;
@@ -481,7 +483,7 @@ impl LivingEntity {
             self.make_move().await;
 
             let mut velo = self.entity.velocity.load();
-            if self.lava_height.load() <= self.get_swim_height() {
+            if self.entity.lava_height.load() <= self.get_swim_height() {
                 velo.x *= 0.5;
                 velo.z *= 0.5;
                 velo.y *= 0.8;
@@ -530,28 +532,38 @@ impl LivingEntity {
         let world = self.entity.world.read().await;
 
         let (block, state) = world.get_block_and_block_state(&pos).await;
-        let props = block.properties(state.id);
-        let name = props.name();
-        let climbable = name == "LadderLikeProperties"
-            || name == "ScaffoldingLikeProperties"
-            || name == "CaveVinesLikeProperties"
-            || name == "CaveVinesPlantLikeProperties";
+        let climbable = block.properties(state.id).map(|props| {
+            let name = props.name();
+            
+        }).unwrap_or(false);
         if climbable {
-            self.climbing.store(true, Relaxed);
-            self.climbing_pos.store(Some(pos));
-            return;
         }
-        if name == "OakTrapdoorLikeProperties" {
-            let trapdoor = OakTrapdoorLikeProperties::from_state_id(state.id);
-            pos.0.y -= 1;
-            let (down_block, down_state) = world.get_block_and_block_state(&pos).await;
-            let down_props = down_block.properties(down_state.id).to_props();
-            if down_props.name() == "LadderLikeProperties" {
-                let ladder = LadderLikeProperties::from_state_id(state.id);
-                if trapdoor.r#facing == ladder.r#facing {
-                    self.climbing.store(true, Relaxed);
-                    self.climbing_pos.store(Some(pos));
-                    return;
+        if let Some(props) = block.properties(state.id) {
+            let name = props.name();
+            if name == "LadderLikeProperties"
+                || name == "ScaffoldingLikeProperties"
+                || name == "CaveVinesLikeProperties"
+                || name == "CaveVinesPlantLikeProperties"
+            {
+                self.climbing.store(true, Relaxed);
+                self.climbing_pos.store(Some(pos));
+                return;
+            }
+
+            if name == "OakTrapdoorLikeProperties" {
+                let trapdoor = OakTrapdoorLikeProperties::from_state_id(state.id, &block);
+                pos.0.y -= 1;
+                let (down_block, down_state) = world.get_block_and_block_state(&pos).await;
+                let is_ladder = down_block.properties(down_state.id).map(|down_props|
+                    down_props.name() == "LadderLikeProperties"
+                ).unwrap_or(false);
+                if is_ladder {
+                    let ladder = LadderLikeProperties::from_state_id(down_state.id, &down_block);
+                    if trapdoor.r#facing == ladder.r#facing {
+                        self.climbing.store(true, Relaxed);
+                        self.climbing_pos.store(Some(pos));
+                        return;
+                    }
                 }
             }
         }
@@ -593,7 +605,7 @@ impl LivingEntity {
 
     pub fn get_swim_height(&self) -> f64 {
         let eye_height = self.entity.standing_eye_height;
-        if self.entity.entity_type = EntityType::BREEZE {
+        if self.entity.entity_type == EntityType::BREEZE {
             eye_height as f64
         } else {
             if eye_height < 0.4 {
@@ -617,8 +629,8 @@ impl LivingEntity {
         velo.y = jump.max(velo.y);
         if self.entity.sprinting.load(Relaxed) {
             let yaw = self.entity.yaw.load() * std::f32::consts::PI / 180.0;
-            velo.x += -yaw.sin() * 0.2;
-            velo.y += yaw.cos() * 0.2;
+            velo.x += -yaw.sin() as f64 * 0.2;
+            velo.y += yaw.cos() as f64 * 0.2;
         }
         self.entity.velocity.store(velo);
         // Todo? VelocityDirty = true
@@ -650,7 +662,7 @@ impl LivingEntity {
 impl EntityBase for LivingEntity {
     async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
         // Following vanilla order of operations
-        self.entity.tick(caller, server).await;
+        self.entity.tick(caller.clone(), server).await;
         self.base_tick().await;
 
         self.tick_movement(server, caller, None).await;
