@@ -1609,7 +1609,7 @@ impl World {
     pub async fn get_fluid(
         &self,
         position: &BlockPos,
-    ) -> Result<pumpkin_data::fluid::Fluid, GetBlockError> {
+    ) -> Result<Fluid, GetBlockError> {
         let id = self.get_block_state_id(position).await;
         Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId)
     }
@@ -1877,9 +1877,13 @@ impl World {
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
-                    let block_pos = BlockPos::new(x, y, z);
-                    if let Ok(fluid) = self.get_fluid(&block_pos).await {
-                        collisions.push(fluid);
+                    let pos = BlockPos::new(x, y, z);
+                    let id = self.get_block_state_id(&pos).await;
+                    if let Some(fluid) = Fluid::from_state_id(id) {
+                        let height = f64::from(fluid.get_height(id));
+                        if height >= bounding_box.min.y {
+                            collisions.push(fluid);
+                        }
                     }
                 }
             }
@@ -1895,14 +1899,24 @@ impl World {
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
-                    let block_pos = BlockPos::new(x, y, z);
-                    if let Ok(fluid) = self.get_fluid(&block_pos).await {
-                        return true;
+                    let pos = BlockPos::new(x, y, z);
+                    let id = self.get_block_state_id(&pos).await;
+                    if let Some(fluid) = Fluid::from_state_id(id) {
+                        let height = f64::from(fluid.get_height(id));
+                        if height >= bounding_box.min.y {
+                            return true;
+                        }
                     }
                 }
             }
         }
         false
+    }
+
+    pub async fn get_fluid_velocity(
+        &self
+    ) -> Vector3<f64> {
+        todo!()
     }
 /*
     // For adjusting movement

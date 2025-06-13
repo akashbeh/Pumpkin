@@ -322,8 +322,8 @@ impl ToTokens for BlockPropertyStruct {
                     block_props
                 }
 
-                fn name_static() -> String {
-                    "#name".to_string()
+                fn name(&self) -> &'static str {
+                    "#name"
                 }
             }
         });
@@ -1333,11 +1333,7 @@ pub(crate) fn build() -> TokenStream {
             // Convert properties to a block state, and add them onto the default state.
             fn from_props(props: Vec<(&str, &str)>, block: &Block) -> Self where Self: Sized;
 
-            fn name_static() -> String where Self: Sized;
-
-            fn name(&self) -> String where Self: Sized {
-                Self::name_static()
-            }
+            fn name(&self) -> &'static str;
         }
 
         pub trait EnumVariants {

@@ -373,7 +373,7 @@ impl LivingEntity {
             if (in_water || in_lava) && (!on_ground || fluid_height > swim_height) {
                 self.swim_upward();
             } else if (on_ground || in_water && fluid_height <= swim_height) && self.jumping_cooldown.load(Relaxed) == 0 {
-                self.jump();
+                self.jump().await;
                 self.jumping_cooldown.store(10, Relaxed);
             }
         } else {
@@ -386,13 +386,13 @@ impl LivingEntity {
 
         let touching_water = self.entity.touching_water.load(Relaxed);
         if (touching_water || self.entity.touching_lava.load(Relaxed)) && should_swim_in_fluids && !can_walk_on_fluid {
-            self.travel_in_fluid(touching_water, movement_speed);
+            self.travel_in_fluid(touching_water, movement_speed).await;
         } else {
             // TODO: Gliding
             self.travel_in_air(
                 movement_speed,
                 off_ground_speed
-            );
+            ).await;
         }
         self.entity.tick_block_underneath(&caller).await;
         let suffocating = self.entity.check_block_collisions(&caller, server).await;
@@ -406,9 +406,7 @@ impl LivingEntity {
         // applyMovementInput
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
-            let pos_affecting_velo = self.entity.get_pos_with_y_offset(0.500001).await;
-            let world = self.entity.world.read().await;
-            let slipperiness = world.get_block(&pos_affecting_velo).await.slipperiness as f64;
+            let slipperiness = self.entity.get_block_with_y_offset(0.500001).await.1.slipperiness as f64;
             let speed = movement_speed * 0.216 / (slipperiness * slipperiness * slipperiness);
             (speed, slipperiness * 0.91)
         } else {
@@ -467,7 +465,7 @@ impl LivingEntity {
                 friction = 0.96;
             }
 
-            self.entity.update_velocity_from_input(self.movement_input.load(), speed);
+            self.entity.update_velocity_from_input(movement_input, speed);
             self.make_move().await;
 
             let mut velo = self.entity.velocity.load();
@@ -479,7 +477,7 @@ impl LivingEntity {
             self.entity.velocity.store(velo);
 
         } else {
-            self.entity.update_velocity_from_input(self.movement_input.load(), 0.02);
+            self.entity.update_velocity_from_input(movement_input, 0.02);
             self.make_move().await;
 
             let mut velo = self.entity.velocity.load();
@@ -522,7 +520,10 @@ impl LivingEntity {
     }
 
     async fn make_move(&self) {
-        self.entity.move_entity(self.entity.velocity.load()).await;
+        self.entity.move_entity(
+            self.entity.velocity.load(),
+            self.entity.get_velocity_multiplier().await as f64
+        ).await;
         self.check_climbing().await;
     }
 
@@ -532,14 +533,8 @@ impl LivingEntity {
         let world = self.entity.world.read().await;
 
         let (block, state) = world.get_block_and_block_state(&pos).await;
-        let climbable = block.properties(state.id).map(|props| {
-            let name = props.name();
-            
-        }).unwrap_or(false);
-        if climbable {
-        }
-        if let Some(props) = block.properties(state.id) {
-            let name = props.name();
+        let name = block.properties(state.id).map(|props| props.name());
+        if let Some(name) = name {
             if name == "LadderLikeProperties"
                 || name == "ScaffoldingLikeProperties"
                 || name == "CaveVinesLikeProperties"
@@ -578,18 +573,19 @@ impl LivingEntity {
             self.fall_distance.store(0.0);
             let mut velo = self.entity.velocity.load();
 
-            let f = 0.15;
-            if velo.x < -0.15 {
-                velo.x = -0.15;
-            } else if velo.x > 0.15 {
-                velo.x = 0.15;
+            let pos = 0.15;
+            let neg = -0.15;
+            if velo.x < neg {
+                velo.x = neg;
+            } else if velo.x > pos {
+                velo.x = pos;
             }
-            if velo.z < -0.15 {
-                velo.z = -0.15;
-            } else if velo.z > 0.15 {
-                velo.z = 0.15;
+            if velo.z < neg {
+                velo.z = neg;
+            } else if velo.z > pos {
+                velo.z = pos;
             }
-            velo.y = velo.y.max(-0.15);
+            velo.y = velo.y.max(neg);
 
             /* This only applies to players
             if velo.y < 0.0 {
@@ -633,29 +629,16 @@ impl LivingEntity {
             velo.y += yaw.cos() as f64 * 0.2;
         }
         self.entity.velocity.store(velo);
-        // Todo? VelocityDirty = true
     }
+
     async fn get_jump_velocity(&self, mut strength: f64) -> f64 {
         strength *= 1.0; // TODO: Entity Attribute jump strength
-        let block_multiplier = {
-            // TODO: getJumpVelocityMultiplier for blocks
-            let block_pos = self.entity.block_pos.load();
-            let f = 1.0; // ^.multiplier
-            let pos_affecting_velo = self.entity.get_pos_with_y_offset(0.500001);
-            let g = 1.0; // ^.multiplier
-            if f == 1.0 {
-                g
-            } else {
-                f
-            }
-        };
-        strength *= block_multiplier;
+        strength *= self.entity.get_jump_velocity_multiplier().await as f64;
         if let Some(effect) = self.get_effect(EffectType::JumpBoost).await {
             strength += 0.1 * (effect.amplifier + 1) as f64;
         }
         strength
     }
-    // TODO: Caching getBlockStateAtPos
 }
 
 #[async_trait]

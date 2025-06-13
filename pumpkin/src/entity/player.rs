@@ -512,7 +512,7 @@ impl Player {
                 _ => {}
             }
             if config.knockback {
-                combat::handle_knockback(attacker_entity, live_victim, knockback_strength).await;
+                combat::handle_knockback(attacker_entity, live_victim, knockback_strength);
             }
         }
 
@@ -1715,7 +1715,7 @@ impl Player {
         let sprinting = self.get_entity().sprinting.load(Ordering::Relaxed);
         let fly_speed = {
             let abilities = self.abilities.lock().await;
-            abilities.flying.then(abilities.fly_speed as f64)
+            abilities.flying.then_some(abilities.fly_speed as f64)
         };
         if let Some(flying) = fly_speed { // TODO: && Not in a vehicle
             if sprinting {

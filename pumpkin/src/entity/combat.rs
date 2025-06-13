@@ -5,7 +5,7 @@ use pumpkin_data::{
 use pumpkin_util::math::vector3::Vector3;
 
 use crate::{
-    entity::{Entity, EntityBase, LivingEntity, player::Player},
+    entity::{Entity, LivingEntity, player::Player},
     world::World,
 };
 
@@ -48,15 +48,14 @@ impl AttackType {
     }
 }
 
-pub async fn handle_knockback(attacker: &Entity, victim: &LivingEntity, strength: f64) {
-    let yaw = attacker.yaw.load();
+pub fn handle_knockback(attacker: &Entity, victim: &LivingEntity, strength: f64) {
+    let angle = attacker.pos.load().sub(&victim.entity.pos.load());
 
-    let knockback = victim.entity.calculate_knockback(
+    victim.entity.apply_knockback(
         strength * 0.5,
-        f64::from((yaw.to_radians()).sin()),
-        f64::from(-(yaw.to_radians()).cos()),
+        angle.x,
+        angle.z
     );
-    victim.move_entity(knockback).await;
     let velocity = attacker.velocity.load();
     attacker.velocity.store(velocity.multiply(0.6, 1.0, 0.6));
 }

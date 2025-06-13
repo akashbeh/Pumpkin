@@ -7,8 +7,9 @@ use living::LivingEntity;
 use player::Player;
 use pumpkin_data::{
     Block,
+    BlockState,
     block_properties::{
-        BlockProperties, CampfireLikeProperties, Facing, HorizontalFacing,
+        BlockProperties, Facing, HorizontalFacing,
         OakFenceGateLikeProperties
     },
     damage::DamageType,
@@ -36,7 +37,7 @@ use pumpkin_util::math::{
 };
 use pumpkin_world::item::ItemStack;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::{
     Arc,
     atomic::{
@@ -114,14 +115,14 @@ pub trait EntityBase: Send + Sync {
 
     // Move by a delta, adjust for collisions, and send
     // TODO: MovementType for pistons etc
-    async fn move_entity(&self, mut motion: Vector3<f64>) {
+    async fn move_entity(&self, motion: Vector3<f64>, velocity_multiplier: f64) {
         let entity = self.get_entity();
         let living = self.get_living_entity();
 
         let final_move = entity.adjust_movement_for_collisions(motion).await;
 
         entity.move_pos(final_move);
-        entity.velocity.store(final_move);
+        entity.velocity.store(final_move * velocity_multiplier);
 
         if let Some(live) = living {
             live.update_fall_distance(final_move.y, entity.on_ground.load(Ordering::Relaxed), false)
@@ -736,25 +737,6 @@ impl Entity {
         self.invulnerable.load(Relaxed) || self.damage_immunities.contains(damage_type)
     }
 
-    fn velocity_multiplier(_pos: Vector3<f64>) -> f32 {
-        // let world = self.world.read().await;
-        // TODO: handle when player is outside world
-        // let block = world.get_block(&self.block_pos.load()).await;
-        // block.velocity_multiplier
-        1.0
-        // if velo_multiplier == 1.0 {
-        //     const VELOCITY_OFFSET: f64 = 0.500001; // Vanilla
-        //     let pos_with_y_offset = BlockPos(Vector3::new(
-        //         pos.x.floor() as i32,
-        //         (pos.y - VELOCITY_OFFSET).floor() as i32,
-        //         pos.z.floor() as i32,
-        //     ));
-        //     let block = world.get_block(&pos_with_y_offset).await.unwrap();
-        //     block.velocity_multiplier
-        // } else {
-        // }
-    }
-
 /*
     // Returns whether entity is suffocating
     pub async fn check_block_collision(entity_base: &dyn EntityBase, server: &Server) -> bool {
@@ -940,10 +922,12 @@ impl Entity {
     /// Applies knockback to the entity, following vanilla Minecraft's mechanics.
     ///
     /// This function calculates the entity's new velocity based on the specified knockback strength and direction.
-    pub fn calculate_knockback(&self, strength: f64, x: f64, z: f64) -> Vector3<f64> {
+    pub fn apply_knockback(&self, strength: f64, mut x: f64, mut z: f64) {
+        // TODO: strength *= 1 - Entity attribute knockback resistance
+        if strength <= 0.0 {
+            return;
+        }
         // This has some vanilla magic
-        let mut x = x;
-        let mut z = z;
         while x.mul_add(x, z * z) < 1.0E-5 {
             x = (rand::random::<f64>() - rand::random::<f64>()) * 0.01;
             z = (rand::random::<f64>() - rand::random::<f64>()) * 0.01;
@@ -951,7 +935,7 @@ impl Entity {
 
         let var8 = Vector3::new(x, 0.0, z).normalize() * strength;
         let velocity = self.velocity.load();
-        Vector3::new(
+        self.velocity.store(Vector3::new(
             velocity.x / 2.0 - var8.x,
             if self.on_ground.load(Relaxed) {
                 (velocity.y / 2.0 + strength).min(0.4)
@@ -959,7 +943,7 @@ impl Entity {
                 velocity.y
             },
             velocity.z / 2.0 - var8.z,
-        )
+        ));
     }
 
     // Part of LivingEntity.tickMovement() in yarn
@@ -983,87 +967,13 @@ impl Entity {
         self.velocity.store(motion);
     }
 
-    /*
-    There are two types of movement
-    One through velocity, the other through one-time moves,
-    like knockback.
-    The latter uses entity.move_entity() (to adjust for collisions)
-    or entity.move_pos()
-    */
-    /*
-    async fn handle_physics(
-        entity_base: &dyn EntityBase,
-        gravity: f64,
-        server: &Server
-    ) {
-        let entity = entity_base.get_entity();
-        let living = entity_base.get_living_entity();
-
-        if entity.pos.load().y < -100.0 {
-            if let Some(live) = living {
-                live.kill().await;
-            } else {
-                entity.remove().await;
-            }
-            entity.velocity.store(Vector3::default());
-            return;
-        }
-
-        let world = entity.world.read().await;
-
-        // Apply gravity
-        let mut velo = entity.velocity.load();
-        velo.y -= gravity;
-        entity.velocity.store(velo);
-
-        // TODO
-        /*
-        Change friction? Or drag?
-        Before or after gravity
-
-        lava:
-            add buoyancy: 0.06?
-            velo *= 0.5
-        water:
-            add buoyancy
-            velo *= 0.8
-
-        cobweb:
-            velo.x = velo.x * 0.25;
-            velo.z = velo.z * 0.25;
-            velo.y = velo.y * 0.05;
-        */
-
-
-        let mut velo = entity.velocity.load();
-
-        let mut friction = 0.91;
-
-
-                friction = 0.91 * f64::from(block.slipperiness);
-            }
-        }
-
-        velo.x *= friction;
-        velo.z *= friction;
-        velo.y *= 0.98;
-
-        // TODO
-        //velo = velo.multiply(entity.velocity_multiplier());
-        //Liquid flow pushing
-
-        entity.velocity.store(velo);
-    }
-    */
-
     async fn tick_block_underneath(&self, caller: &Arc<dyn EntityBase>) {
-        let living = caller.get_living_entity();
+        let world = self.world.read().await;
+        let (pos, block, state) = self.get_block_with_y_offset(0.2).await;
+        world.block_registry.on_stepped_on(&world, caller.as_ref(), pos, block, state).await;
+        /*
         if self.on_ground.load(Ordering::Relaxed) {
-            let landing_pos = self.get_pos_with_y_offset(0.2).await;
-            let world = self.world.read().await;
-            let (block, state) = world
-                .get_block_and_block_state(&landing_pos)
-                .await;
+            let (_pos, block, state) = self.get_block_with_y_offset(0.2).await;
             if let Some(live) = living {
                 if block == Block::CAMPFIRE
                     || block == Block::SOUL_CAMPFIRE
@@ -1077,7 +987,7 @@ impl Entity {
                 }
             }
         }
-        // TODO in full
+        */
     }
 
     // Returns whether the entity's eye level is in a wall
@@ -1112,7 +1022,7 @@ impl Entity {
                     if collided {
                         world
                             .block_registry
-                            .on_entity_collision(block, &world, &caller, pos, state, server)
+                            .on_entity_collision(block, &world, caller.as_ref(), pos, state, server)
                             .await;
                     }
                 }
@@ -1122,9 +1032,9 @@ impl Entity {
     }
 
     // updateWaterState() in yarn
-    async fn update_fluid_state(&self, caller: &Arc<dyn EntityBase>, server: &Server) {
-        let is_pushed = *caller.is_pushed_by_fluids();
-        let mut fluids = HashMap::new();
+    async fn update_fluid_state(&self, caller: &Arc<dyn EntityBase>) {
+        let is_pushed = caller.is_pushed_by_fluids();
+        let mut fluids = BTreeMap::new();
 
         let water_push = Vector3::default();
         let water_n = 0;
@@ -1134,7 +1044,7 @@ impl Entity {
         let mut fluid_n = [water_n, lava_n];
 
         let mut in_fluid = [false, false];
-        let mut fluid_height = [0.0, 0.0];
+        let mut fluid_height: [f64; 2] = [0.0, 0.0];
 
         let bounding_box = self.bounding_box.load().expand(-0.001, -0.001, -0.001);
         let min = bounding_box.min_block_pos();
@@ -1145,28 +1055,30 @@ impl Entity {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    if let Ok(fluid) = world.get_fluid(&pos).await {
-                        let level = todo!();
-                        let collision_shape = BoundingBox {
+                    let id = world.get_block_state_id(&pos).await;
+                    if let Some(fluid) = Fluid::from_state_id(id) {
+                        let height = f64::from(fluid.get_height(id));
+                        let collision_shape = pumpkin_data::CollisionShape {
                             min: Vector3::default(),
-                            max: Vector3::new(1.0, level, 1.0),
-                        }.shift(pos).to_f64();
-                        if collision_shape.intersects(bounding_box) {
-                            fluids.insert(fluid.id, fluid);
-
+                            max: Vector3::new(1.0, height, 1.0),
+                        }.at_pos(pos);
+                        if collision_shape.intersects(&bounding_box) {
                             let i = if fluid.id == Fluid::LAVA.id || fluid.id == Fluid::FLOWING_LAVA.id {
                                 1
                             } else {
                                 0
                             };
-                            fluid_height[i] = fluid_height[i].max(collision_shape.max.y - bounding_box.max.y);
+
+                            fluids.insert(fluid.id, fluid);
+
+                            fluid_height[i] = fluid_height[i].max(height - bounding_box.max.y);
                             in_fluid[i] = true;
 
                             if !is_pushed {
                                 continue;
                             }
 
-                            let fluid_velo: Vector3<f64> = todo!();
+                            let mut fluid_velo: Vector3<f64> = world.get_fluid_velocity().await;
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
@@ -1178,10 +1090,10 @@ impl Entity {
             }
         }
 
-        for (_, fluid) in fluids.iter() {
+        for (_, fluid) in fluids {
             world
                 .block_registry
-                .on_entity_collision_fluid(fluid, &caller)
+                .on_entity_collision_fluid(&fluid, caller.as_ref())
                 .await;
         }
 
@@ -1231,16 +1143,16 @@ impl Entity {
             }
             push = push * speed;
 
-            let mut velo = self.velocity.load();
+            let velo = self.velocity.load();
             let g = 0.003;
             if velo.x.abs() < g && velo.z.abs() < g && velo.length_squared() < 0.00002025 {
                 push = push.normalize() * 0.0045;
             }
-            self.velocity.store(velo);
+            self.velocity.store(velo + push);
         }
     }
 
-    async fn get_pos_with_y_offset(&self, offset: f64) -> BlockPos {
+    async fn get_pos_with_y_offset(&self, offset: f64) -> (BlockPos, Option<Block>, Option<BlockState>) {
         if let Some(mut supporting_block) = self.supporting_block_pos.load() {
             if offset > 1.0e-5 {
                 let (block, state) = self
@@ -1253,18 +1165,33 @@ impl Entity {
                     let name = props.name();
                     if offset <= 0.5 && (name == "OakFenceLikeProperties" ||
                     name == "ResinBrickWallLikeProperties" ||
-                    name == "OakFenceGateLikeProperties" && OakFenceGateLikeProperties::from_state_id(state.id).r#open) {
-                        return supporting_block;
+                    name == "OakFenceGateLikeProperties" && OakFenceGateLikeProperties::from_state_id(state.id, &block).r#open) {
+                        return (supporting_block, Some(block), Some(state));
                     }
                 }
                 supporting_block.0.y = (self.pos.load().y - offset).floor() as i32;
-                return supporting_block;
+                return (supporting_block, Some(block), Some(state));
             }
-            return supporting_block;
+            return (supporting_block, None, None);
         }
         let mut block_pos = self.block_pos.load();
         block_pos.0.y = (self.pos.load().y - offset).floor() as i32;
-        block_pos
+        (block_pos, None, None)
+    }
+
+    async fn get_block_with_y_offset(&self, offset: f64) -> (BlockPos, Block, BlockState) {
+        let (pos, block, state) = self.get_pos_with_y_offset(offset).await;
+        if let (Some(b), Some(s)) = (block, state) {
+            (pos, b, s)
+        } else {
+            let (b, s) = self
+                .world
+                .read()
+                .await
+                .get_block_and_block_state(&pos)
+                .await;
+            (pos, b, s)
+        }
     }
 
     // Entity.updateVelocity in yarn
@@ -1294,6 +1221,29 @@ impl Entity {
             lv.z * i as f64 + lv.x * h as f64,
         )
     }
+
+    async fn get_velocity_multiplier(&self) -> f32 {
+        let world = self.world.read().await;
+        let block = world.get_block(&self.block_pos.load()).await;
+        let m1 = block.velocity_multiplier;
+        if block == Block::WATER || block == Block::BUBBLE_COLUMN || m1 != 1.0 {
+            m1
+        } else {
+            let (_pos, block, _state) = self.get_block_with_y_offset(0.500001).await;
+            block.velocity_multiplier
+        }
+    }
+
+    async fn get_jump_velocity_multiplier(&self) -> f32 {
+        let world = self.world.read().await;
+        let f = world.get_block(&self.block_pos.load()).await.jump_velocity_multiplier;
+        let g = self.get_block_with_y_offset(0.500001).await.1.jump_velocity_multiplier;
+        if f == 1.0 {
+            g
+        } else {
+            f
+        }
+    }
 }
 
 #[async_trait]
@@ -1302,9 +1252,9 @@ impl EntityBase for Entity {
         false
     }
 
-    async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
+    async fn tick(&self, caller: Arc<dyn EntityBase>, _server: &Server) {
         self.tick_portal(&caller).await;
-        self.update_fluid_state(&caller, server).await;
+        self.update_fluid_state(&caller).await;
         let fire_ticks = self.fire_ticks.load(Ordering::Relaxed);
         if fire_ticks > 0 {
             if self.entity_type.fire_immune {

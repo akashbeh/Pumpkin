@@ -81,7 +81,7 @@ impl EntityBase for ItemEntity {
         // TODO: Vanilla order of operations
         todo!();
         //Entity::handle_physics(self, 0.04, server).await;
-        self.move_entity(self.entity.velocity.load()).await;
+        //self.move_entity(self.entity.velocity.load()).await;
 
         self.base_tick().await;
     }
