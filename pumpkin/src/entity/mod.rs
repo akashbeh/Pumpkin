@@ -109,8 +109,17 @@ pub trait EntityBase: Send + Sync {
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
 
-    fn is_pushed_by_fluids(&self) -> bool {
+    async fn is_pushed_by_fluids(&self) -> bool {
         true
+        // Implemented for player
+        // Persistent projectile: !isInGround()
+        // Drowned: !isSwimming()
+        /*
+        False for:
+        Axolotl, frog, turtle,
+        water animal entities: dolphin, squid
+        water creature entities: all fish
+        */
     }
 
     // Move by a delta, adjust for collisions, and send
@@ -1003,8 +1012,8 @@ impl Entity {
 
         let mut eye_level_box = aabb;
         let eye_height = f64::from(self.standing_eye_height);
-        eye_level_box.min.y = eye_height;
-        eye_level_box.max.y = eye_height;
+        eye_level_box.min.y += eye_height;
+        eye_level_box.max.y = eye_level_box.min.y;
 
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
@@ -1055,41 +1064,39 @@ impl Entity {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    let id = world.get_block_state_id(&pos).await;
-                    if let Some(fluid) = Fluid::from_state_id(id) {
+                    let (fluid, id) = world.get_fluid_with_id(&pos).await;
+                    if fluid != Fluid::EMPTY {
                         let height = f64::from(fluid.get_height(id));
-                        let collision_shape = pumpkin_data::CollisionShape {
-                            min: Vector3::default(),
-                            max: Vector3::new(1.0, height, 1.0),
-                        }.at_pos(pos);
-                        if collision_shape.intersects(&bounding_box) {
-                            let i = if fluid.id == Fluid::LAVA.id || fluid.id == Fluid::FLOWING_LAVA.id {
+                        if height + f64::from(y) >= bounding_box.min.y {
+                            let i = if fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id {
                                 1
                             } else {
                                 0
                             };
 
-                            fluids.insert(fluid.id, fluid);
-
                             fluid_height[i] = fluid_height[i].max(height - bounding_box.max.y);
                             in_fluid[i] = true;
 
                             if !is_pushed {
+                                fluids.insert(fluid.id, fluid);
                                 continue;
                             }
 
-                            let mut fluid_velo: Vector3<f64> = world.get_fluid_velocity().await;
+                            let mut fluid_velo: Vector3<f64> = world.get_fluid_velocity(pos, &fluid, id).await;
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
                             fluid_push[i] = fluid_push[i] + fluid_velo;
                             fluid_n[i] += 1;
+
+                            fluids.insert(fluid.id, fluid);
                         }
                     }
                 }
             }
         }
 
+        // BTreeMap auto-sorts water before lava as in vanilla
         for (_, fluid) in fluids {
             world
                 .block_registry

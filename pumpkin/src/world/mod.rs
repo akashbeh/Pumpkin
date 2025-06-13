@@ -1614,6 +1614,15 @@ impl World {
         Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId)
     }
 
+    pub async fn get_fluid_with_id(
+        &self,
+        position: &BlockPos,
+    ) -> (Fluid, u16) {
+        let id = self.get_block_state_id(position).await;
+        let fluid = Fluid::from_state_id(id).unwrap_or(Fluid::EMPTY);
+        (fluid, id)
+    }
+
     /// Gets the `BlockState` from the block registry. Returns Air if the block state was not found.
     pub async fn get_block_state(&self, position: &BlockPos) -> pumpkin_data::BlockState {
         let id = self.get_block_state_id(position).await;
@@ -1878,8 +1887,8 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    let id = self.get_block_state_id(&pos).await;
-                    if let Some(fluid) = Fluid::from_state_id(id) {
+                    let (fluid, id) = self.get_fluid_with_id(&pos).await;
+                    if fluid != Fluid::EMPTY {
                         let height = f64::from(fluid.get_height(id));
                         if height >= bounding_box.min.y {
                             collisions.push(fluid);
@@ -1900,8 +1909,8 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    let id = self.get_block_state_id(&pos).await;
-                    if let Some(fluid) = Fluid::from_state_id(id) {
+                    let (fluid, id) = self.get_fluid_with_id(&pos).await;
+                    if fluid != Fluid::EMPTY {
                         let height = f64::from(fluid.get_height(id));
                         if height >= bounding_box.min.y {
                             return true;
@@ -1913,9 +1922,80 @@ impl World {
         false
     }
 
+    // FlowableFluid.getVelocity()
     pub async fn get_fluid_velocity(
-        &self
+        &self,
+        pos0: BlockPos,
+        fluid0: &Fluid,
+        id0: u16,
     ) -> Vector3<f64> {
+        let mut velo = Vector3::default();
+        let mut check_flow = fluid0.is_falling(id0);
+
+        for dir in BlockDirection::horizontal() {
+            let offset = dir.to_offset();
+            let pos = pos0.offset(offset);
+            let (fluid, id) = self.get_fluid_with_id(&pos).await;
+
+            if check_flow {
+                let mut flow_blocked = self.is_flow_blocked(fluid0, pos, fluid, id, dir).await;
+
+                if !flow_blocked {
+                    let pos_up = pos.up();
+                    let (fluid_up, id_up) = self.get_fluid_with_id(&pos_up).await;
+                    flow_blocked = self.is_flow_blocked(fluid0, pos_up, fluid_up, id_up, dir).await;
+                }
+
+                if flow_blocked {
+                    velo = velo.normalize();
+                    velo.y -= 6.0;
+                    check_flow = false;
+                }
+            }
+
+            if fluid != Fluid::EMPTY && fluid != fluid0 {
+                continue;
+            }
+            let height = fluid.get_height(id);
+            let mut amplitude = 0.0;
+            if height == 0.0 {
+                let (block, state) = get_block_and_state_by_state_id(id).unwrap_or((
+                    Block::AIR,
+                    get_state_by_state_id(Block::AIR.default_state_id).unwrap(),
+                ));
+                let blocks_movement = state.is_solid() && block != Block::COBWEB && block != Block::BAMBOO_SAPLING;
+                if !blocks_movement {
+                    let down_pos = pos.down();
+                    let (down_fluid, down_id) = self.get_fluid_with_id(&down_pos).await;
+                    if fluid == fluid0 {
+                        amplitude = fluid0.get_height(id0) - height + 0.8888889;
+                    }
+                }
+            } else if height > 0.0 {
+                amplitude = fluid0.get_height(id0) - height;
+            }
+            if amplitude == 0.0 {
+                continue;
+            }
+            velo.x += offset.x * amplitude;
+            velo.z += offset.z * amplitude;
+        }
+        velo
+    }
+
+    async fn is_flow_blocked(&self, fluid0: Fluid, pos: BlockPos, fluid: Fluid, id: u16, direction: BlockDirection) -> bool {
+        if fluid == fluid0 {
+            return false;
+        }
+        if direction == BlockDirection::Up {
+            return true;
+        }
+        let block = get_block_by_state_id(id);
+        // TODO: Determine blue ice etc
+        if block == Some(Block::ICE) || block == Some(Block::FROSTED_ICE) {
+            return false;
+        }
+        // return lv
         todo!()
     }
 /*

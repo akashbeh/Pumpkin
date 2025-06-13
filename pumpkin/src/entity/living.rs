@@ -414,7 +414,7 @@ impl LivingEntity {
             (speed, 0.91)
         };
         self.entity.update_velocity_from_input(self.movement_input.load(), speed);
-        self.apply_climbing_speed();
+        self.apply_climbing_speed().await;
 
         self.make_move().await;
 
@@ -568,7 +568,7 @@ impl LivingEntity {
         }
     }
 
-    fn apply_climbing_speed(&self) {
+    async fn apply_climbing_speed(&self) {
         if self.climbing.load(Relaxed) {
             self.fall_distance.store(0.0);
             let mut velo = self.entity.velocity.load();
@@ -587,15 +587,21 @@ impl LivingEntity {
             }
             velo.y = velo.y.max(neg);
 
-            /* This only applies to players
-            if velo.y < 0.0 {
-                let (block, state) = self.entity.world.read().await.get_block_and_block_state(&self.block_pos.load());
-                let props = block.properties(state.id);
-                if self.entity.sneaking.load(Relaxed) && Block::has_properties::<block_properties::ScaffoldingLikeProperties>::() {
-                    velo.y = 0.0;
+            if velo.y < 0.0 && self.entity.entity_type == EntityType::PLAYER && self.entity.sneaking.load(Relaxed) {
+                let block = self.entity
+                    .world
+                    .read()
+                    .await
+                    .get_block(&self.entity.block_pos.load())
+                    .await;
+                if let Some(props) = block.properties(block.default_state_id) {
+                    if props.name() == "ScaffoldingLikeProperties" {
+                        velo.y = 0.0
+                    }
                 }
             }
-            */
+
+            self.entity.velocity.store(velo);
         }
     }
 

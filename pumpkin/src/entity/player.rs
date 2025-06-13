@@ -1731,6 +1731,7 @@ impl Player {
             }
         }
     }
+
     pub async fn is_flying(&self) -> bool {
         let abilities = self.abilities.lock().await;
         abilities.flying
@@ -1874,6 +1875,10 @@ impl EntityBase for Player {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         Some(&self.living_entity)
+    }
+
+    async fn is_pushed_by_fluids(&self) -> bool {
+        !self.is_flying().await
     }
 }
 
