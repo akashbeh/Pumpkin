@@ -1042,7 +1042,7 @@ impl Entity {
 
     // updateWaterState() in yarn
     async fn update_fluid_state(&self, caller: &Arc<dyn EntityBase>) {
-        let is_pushed = caller.is_pushed_by_fluids();
+        let is_pushed = caller.is_pushed_by_fluids().await;
         let mut fluids = BTreeMap::new();
 
         let water_push = Vector3::default();
@@ -1065,7 +1065,7 @@ impl Entity {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let (fluid, id) = world.get_fluid_with_id(&pos).await;
-                    if fluid != Fluid::EMPTY {
+                    if fluid.id != Fluid::EMPTY.id {
                         let height = f64::from(fluid.get_height(id));
                         if height + f64::from(y) >= bounding_box.min.y {
                             let i = if fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id {
