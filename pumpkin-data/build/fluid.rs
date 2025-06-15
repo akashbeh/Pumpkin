@@ -454,7 +454,7 @@ pub(crate) fn build() -> TokenStream {
             #id_lit => Some(Self::#const_ident),
         });
 
-        let fluid_states = fluid.states.iter().map(|state| {
+        let fluid_states = fluid.states.iter().enumerate().map(|(index, state)| {
             let height = state.height;
             let level = state.level;
             let is_empty = state.is_empty;
@@ -462,8 +462,8 @@ pub(crate) fn build() -> TokenStream {
             let block_state_id = state.block_state_id;
             let is_still = state.is_still;
             // Derive these values based on existing fields
-            let is_source = level == 0 && is_still; // Level 0 and still means it's a source
-            let falling = false; // Default to false - we'll handle falling in the fluid behavior code
+            let is_source = level == 1 && is_still; // Level 1 and still means it's a source
+            let falling = index > 7;
 
             quote! {
                 FluidState {
@@ -543,15 +543,15 @@ pub(crate) fn build() -> TokenStream {
         }
     }
 
-    let unique_fluid_states = unique_states.iter().map(|state| {
+    let unique_fluid_states = unique_states.iter().enumerate().map(|(index, state)| {
         let height = state.height;
         let level = state.level;
         let is_empty = state.is_empty;
         let blast_resistance = state.blast_resistance;
         let block_state_id = state.block_state_id;
         let is_still = state.is_still;
-        let is_source = level == 0 && is_still;
-        let falling = false;
+        let is_source = level == 1 && is_still;
+        let falling = index > 7;
         quote! {
             PartialFluidState {
                 height: #height,
