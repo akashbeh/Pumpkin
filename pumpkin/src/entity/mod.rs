@@ -1072,10 +1072,8 @@ impl Entity {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    if let (Ok(fluid), id) =  world.get_fluid_with_id(&pos).await {
-                        if fluid.id == Fluid::EMPTY.id {
-                            continue;
-                        }
+                    let (fluid, id) = world.get_fluid_with_id(&pos).await;
+                    if fluid.id != Fluid::EMPTY.id {
 
                         let marginal_height = f64::from(fluid.get_height(id)) + f64::from(y) - bounding_box.min.y;
                         if marginal_height >= 0.0 {
@@ -1097,10 +1095,8 @@ impl Entity {
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
-                            println!("At {x}, {y}, {z}");
-                            println!("Fluid velo: {fluid_velo:?}");
+                            println!("At {x}, {y}, {z}, Fluid velo: {fluid_velo:?}");
                             fluid_push[i] = fluid_push[i] + fluid_velo;
-                            println!("fluid push now: {fluid_push:?}");
                             fluid_n[i] += 1;
 
                             fluids.insert(fluid.id, fluid);

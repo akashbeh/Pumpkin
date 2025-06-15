@@ -1617,10 +1617,13 @@ impl World {
     pub async fn get_fluid_with_id(
         &self,
         position: &BlockPos,
-    ) -> (Result<Fluid, GetBlockError>, u16) {
+    ) -> (Fluid, u16) {
         let id = self.get_block_state_id(position).await;
-        let fluid = Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId);
+        /*let fluid = Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId);
+        (fluid, id)*/
+        let fluid = Fluid::from_state_id(id).unwrap_or(Fluid::EMPTY);
         (fluid, id)
+        // TODO: Waterlogged?
     }
 
     /// Gets the `BlockState` from the block registry. Returns Air if the block state was not found.
@@ -1887,10 +1890,8 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    if let (Ok(fluid), id) = self.get_fluid_with_id(&pos).await {
-                        if fluid.id == Fluid::EMPTY.id {
-                            continue;
-                        }
+                    let (fluid, id) = self.get_fluid_with_id(&pos).await;
+                    if fluid.id != Fluid::EMPTY.id {
                         let height = f64::from(fluid.get_height(id));
                         if height >= bounding_box.min.y {
                             collisions.push(fluid);
@@ -1911,10 +1912,8 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    if let (Ok(fluid), id) = self.get_fluid_with_id(&pos).await {
-                        if fluid.id == Fluid::EMPTY.id {
-                            continue;
-                        }
+                    let (fluid, id) = self.get_fluid_with_id(&pos).await;
+                    if fluid.id != Fluid::EMPTY.id {
                         let height = f64::from(fluid.get_height(id));
                         if height >= bounding_box.min.y {
                             return true;
@@ -1938,9 +1937,7 @@ impl World {
         for dir in BlockDirection::horizontal() {
             let offset = dir.to_offset();
             let pos = pos0.offset(offset);
-            let (Ok(fluid), id) = self.get_fluid_with_id(&pos).await else {
-                continue;
-            };
+            let (fluid, id) = self.get_fluid_with_id(&pos).await;
 
             if fluid.id != Fluid::EMPTY.id && fluid.id != fluid0.id {
                 continue;
@@ -1955,9 +1952,7 @@ impl World {
                 let blocks_movement = state.is_solid() && block != Block::COBWEB && block != Block::BAMBOO_SAPLING;
                 if !blocks_movement {
                     let down_pos = pos.down();
-                    let (Ok(down_fluid), down_id) = self.get_fluid_with_id(&down_pos).await else {
-                        continue;
-                    };
+                    let (down_fluid, down_id) = self.get_fluid_with_id(&down_pos).await;
                     if down_fluid.id == fluid0.id {
                         let down_height = down_fluid.get_height(down_id);
                         amplitude = f64::from(fluid0.get_height(id0) - down_height) + 0.8888889;
@@ -1997,7 +1992,6 @@ impl World {
     // FlowableFluid.isFlowBlocked()
     async fn is_flow_blocked(&self, fluid0_id: u16, pos: BlockPos, direction: BlockDirection) -> bool {
         let (fluid, id) = self.get_fluid_with_id(&pos).await;
-        let fluid = fluid.unwrap_or(Fluid::EMPTY);
 
         if fluid.id == fluid0_id {
             return false;

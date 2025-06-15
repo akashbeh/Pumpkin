@@ -4,7 +4,6 @@ use std::{collections::HashMap, sync::atomic::AtomicI32};
 
 use super::EntityBase;
 use super::{Entity, EntityId, NBTStorage, effect::Effect};
-use super::player::Player;
 use crate::server::Server;
 use async_trait::async_trait;
 use crossbeam::atomic::AtomicCell;
