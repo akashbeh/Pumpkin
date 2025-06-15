@@ -65,6 +65,8 @@ impl LivingEntity {
         } else {
             0.8
         };
+        // TODO: Extract default MOVEMENT_SPEED Entity Attribute
+        let default_movement_speed = 0.25;
         Self {
             entity,
             time_until_regen: AtomicI32::new(0),
@@ -80,7 +82,7 @@ impl LivingEntity {
             climbing_pos: AtomicCell::new(None),
             water_movement_speed_multiplier,
             movement_input: AtomicCell::new(Vector3::default()),
-            movement_speed: AtomicCell::new(0.0),
+            movement_speed: AtomicCell::new(default_movement_speed),
         }
     }
 
@@ -319,7 +321,7 @@ impl LivingEntity {
     }
 
     async fn get_effective_gravity(&self) -> f64 {
-        // TODO: If hasNoGravity() { 0.0 }
+        // If hasNoGravity() { 0.0 }
         if self.entity.velocity.load().y <= 0.0 && self.has_effect(EffectType::SlowFalling).await {
             0.01
         } else {
@@ -327,30 +329,20 @@ impl LivingEntity {
         }
     }
 
-    async fn tick_movement(&self, server: &Server, caller: Arc<dyn EntityBase>, player: Option<Arc<Player>>) {
+    async fn tick_movement(&self, server: &Server, caller: Arc<dyn EntityBase>) {
         if self.jumping_cooldown.load(Relaxed) != 0 {
             self.jumping_cooldown.fetch_sub(1, Relaxed);
         }
+        // For a player, it's the entity attribute
         let movement_speed = self.movement_speed.load();
-        let off_ground_speed = if let Some(ref p) = player {
-            p.get_off_ground_speed().await
-        } else {
-            // TODO: If the passenger is a player, ogs = movement_speed * 0.1
-            0.02
-        };
-        let should_swim_in_fluids = if let Some(ref p) = player {
-            if p.is_flying().await {
+        let should_swim_in_fluids = if let Some(player) = caller.get_player() {
+            if player.is_flying().await {
                 false
             } else {
                 true
             }
         } else {
             true
-        };
-        let can_walk_on_fluid = if self.entity.entity_type == EntityType::STRIDER {
-            true
-        } else {
-            false
         };
 
         self.entity.check_zero_velo();
@@ -371,7 +363,10 @@ impl LivingEntity {
             let swim_height = self.get_swim_height();
             let on_ground = self.entity.on_ground.load(Relaxed);
             if (in_water || in_lava) && (!on_ground || fluid_height > swim_height) {
-                self.swim_upward();
+                // Swim upward
+                let mut velo = self.entity.velocity.load();
+                velo.y += 0.04;
+                self.entity.velocity.store(velo);
             } else if (on_ground || in_water && fluid_height <= swim_height) && self.jumping_cooldown.load(Relaxed) == 0 {
                 self.jump().await;
                 self.jumping_cooldown.store(10, Relaxed);
@@ -385,13 +380,18 @@ impl LivingEntity {
         }
 
         let touching_water = self.entity.touching_water.load(Relaxed);
-        if (touching_water || self.entity.touching_lava.load(Relaxed)) && should_swim_in_fluids && !can_walk_on_fluid {
-            self.travel_in_fluid(touching_water, movement_speed).await;
+        // Strider is the only entity that has canWalkOnFluid = false
+        if (touching_water || self.entity.touching_lava.load(Relaxed)) && should_swim_in_fluids && self.entity.entity_type != EntityType::STRIDER {
+            self.travel_in_fluid(
+                caller.clone(),
+                touching_water,
+                movement_speed
+            ).await;
         } else {
             // TODO: Gliding
             self.travel_in_air(
-                movement_speed,
-                off_ground_speed
+                caller.clone(),
+                movement_speed
             ).await;
         }
         self.entity.tick_block_underneath(&caller).await;
@@ -401,8 +401,8 @@ impl LivingEntity {
         }
     }
 
-    // movement_speed and off_ground_speed are different for a Player
-    async fn travel_in_air(&self, movement_speed: f64, off_ground_speed: f64) {
+    async fn travel_in_air(&self, caller: Arc<dyn EntityBase>, movement_speed: f64) {
+        //println!("Travel in air");
         // applyMovementInput
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
@@ -410,13 +410,19 @@ impl LivingEntity {
             let speed = movement_speed * 0.216 / (slipperiness * slipperiness * slipperiness);
             (speed, slipperiness * 0.91)
         } else {
-            let speed = off_ground_speed;
+            println!("Off ground");
+            let speed = if let Some(player) = caller.get_player() {
+                player.get_off_ground_speed().await
+            } else {
+                // TODO: If the passenger is a player, ogs = movement_speed * 0.1
+                0.02
+            };
             (speed, 0.91)
         };
         self.entity.update_velocity_from_input(self.movement_input.load(), speed);
         self.apply_climbing_speed().await;
 
-        self.make_move().await;
+        self.make_move(caller).await;
 
         let mut velo = self.entity.velocity.load();
         // TODO: Add powdered snow
@@ -429,7 +435,7 @@ impl LivingEntity {
         } else {
             velo.y -= self.get_effective_gravity().await;
             // TODO: If world is not loaded: replace effective gravity with:
-            // if below world's bottom y, 0.1, else 0.0
+            // if below world's bottom y then 0.1, else 0.0
         }
         // If entity has no drag: store velo and return
 
@@ -441,7 +447,8 @@ impl LivingEntity {
     }
 
     // movement_speed is different for Player
-    async fn travel_in_fluid(&self, water: bool, movement_speed: f64) {
+    async fn travel_in_fluid(&self, caller: Arc<dyn EntityBase>, water: bool, movement_speed: f64) {
+        println!("Travel in fluid");
         let movement_input = self.movement_input.load();
         let y0 = self.entity.pos.load().y;
         let falling = self.entity.velocity.load().y <= 0.0;
@@ -466,7 +473,7 @@ impl LivingEntity {
             }
 
             self.entity.update_velocity_from_input(movement_input, speed);
-            self.make_move().await;
+            self.make_move(caller).await;
 
             let mut velo = self.entity.velocity.load();
             if self.entity.horizontal_collision.load(Relaxed) && self.climbing.load(Relaxed) {
@@ -478,7 +485,7 @@ impl LivingEntity {
 
         } else {
             self.entity.update_velocity_from_input(movement_input, 0.02);
-            self.make_move().await;
+            self.make_move(caller).await;
 
             let mut velo = self.entity.velocity.load();
             if self.entity.lava_height.load() <= self.get_swim_height() {
@@ -519,10 +526,12 @@ impl LivingEntity {
         }
     }
 
-    async fn make_move(&self) {
-        self.entity.move_entity(
+    async fn make_move(&self, caller: Arc<dyn EntityBase>) {
+        let velocity_multiplier = self.entity.get_velocity_multiplier().await as f64;
+        //println!("Velo mult: {}", velocity_multiplier);
+        caller.move_entity(
             self.entity.velocity.load(),
-            self.entity.get_velocity_multiplier().await as f64
+            velocity_multiplier,
         ).await;
         self.check_climbing().await;
     }
@@ -562,6 +571,7 @@ impl LivingEntity {
                 }
             }
         }
+        //println!("Not climbing");
         self.climbing.store(false, Relaxed);
         if self.entity.on_ground.load(Relaxed) {
             self.climbing_pos.store(None);
@@ -617,11 +627,7 @@ impl LivingEntity {
             }
         }
     }
-    fn swim_upward(&self) {
-        let mut velo = self.entity.velocity.load();
-        velo.y = 0.04;
-        self.entity.velocity.store(velo);
-    }
+
     async fn jump(&self) {
         let jump = self.get_jump_velocity(1.0).await;
         if jump <= 1.0e-5 {
@@ -654,7 +660,7 @@ impl EntityBase for LivingEntity {
         self.entity.tick(caller.clone(), server).await;
         self.base_tick().await;
 
-        self.tick_movement(server, caller, None).await;
+        self.tick_movement(server, caller).await;
     }
 
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {

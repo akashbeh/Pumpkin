@@ -46,6 +46,8 @@ use std::sync::{
     },
 };
 use tokio::sync::{Mutex, RwLock};
+// DEBUG
+use rand::Rng;
 
 use crate::world::World;
 
@@ -108,6 +110,7 @@ pub trait EntityBase: Send + Sync {
     async fn on_player_collision(&self, _player: &Arc<Player>) {}
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
+    fn get_player(&self) -> Option<&Player> { None }
 
     async fn is_pushed_by_fluids(&self) -> bool {
         true
@@ -897,6 +900,8 @@ impl Entity {
             }
             self.on_ground.store(supporting_block_pos.is_some(), Ordering::Relaxed);
             self.supporting_block_pos.store(supporting_block_pos);
+        } else {
+            println!("Zero y move");
         }
 
         let mut horizontal_collision = false;
@@ -964,10 +969,11 @@ impl Entity {
                 motion.z = 0.0;
             }
         } else {
-            for axis in Axis::horizontal() {
-                if motion.get_axis(axis).abs() < 0.003 {
-                    motion.set_axis(axis, 0.0);
-                }
+            if motion.x.abs() < 0.003 {
+                motion.x = 0.0;
+            }
+            if motion.z.abs() < 0.003 {
+                motion.z = 0.0;
             }
         }
         if motion.y.abs() < 0.003 {
@@ -980,6 +986,7 @@ impl Entity {
         let world = self.world.read().await;
         let (pos, block, state) = self.get_block_with_y_offset(0.2).await;
         world.block_registry.on_stepped_on(&world, caller.as_ref(), pos, block, state).await;
+        // TODO: Add this to on_stepped_on
         /*
         if self.on_ground.load(Ordering::Relaxed) {
             let (_pos, block, state) = self.get_block_with_y_offset(0.2).await;
@@ -1053,6 +1060,7 @@ impl Entity {
         let mut fluid_n = [water_n, lava_n];
 
         let mut in_fluid = [false, false];
+        // The maximum fluid height found
         let mut fluid_height: [f64; 2] = [0.0, 0.0];
 
         let bounding_box = self.bounding_box.load().expand(-0.001, -0.001, -0.001);
@@ -1064,17 +1072,20 @@ impl Entity {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    let (fluid, id) = world.get_fluid_with_id(&pos).await;
-                    if fluid.id != Fluid::EMPTY.id {
-                        let height = f64::from(fluid.get_height(id));
-                        if height + f64::from(y) >= bounding_box.min.y {
+                    if let (Ok(fluid), id) =  world.get_fluid_with_id(&pos).await {
+                        if fluid.id == Fluid::EMPTY.id {
+                            continue;
+                        }
+
+                        let marginal_height = f64::from(fluid.get_height(id)) + f64::from(y) - bounding_box.min.y;
+                        if marginal_height >= 0.0 {
                             let i = if fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id {
                                 1
                             } else {
                                 0
                             };
 
-                            fluid_height[i] = fluid_height[i].max(height - bounding_box.max.y);
+                            fluid_height[i] = fluid_height[i].max(marginal_height);
                             in_fluid[i] = true;
 
                             if !is_pushed {
@@ -1082,11 +1093,14 @@ impl Entity {
                                 continue;
                             }
 
-                            let mut fluid_velo: Vector3<f64> = world.get_fluid_velocity(pos, &fluid, id).await;
+                            let mut fluid_velo = world.get_fluid_velocity(pos, &fluid, id).await;
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
+                            println!("At {x}, {y}, {z}");
+                            println!("Fluid velo: {fluid_velo:?}");
                             fluid_push[i] = fluid_push[i] + fluid_velo;
+                            println!("fluid push now: {fluid_push:?}");
                             fluid_n[i] += 1;
 
                             fluids.insert(fluid.id, fluid);
@@ -1112,14 +1126,24 @@ impl Entity {
         self.push_by_fluid(0.014, fluid_push[0], fluid_n[0]);
         self.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
 
+        // DEBUG
+        /*
+        let mut rng = rand::thread_rng();
+        let random: u8 = rng.gen_range(0..100);*/
+        if in_fluid[0] {
+            println!("Fluid height: {:?}", fluid_height);
+            println!("In fluid: {:?}", in_fluid);
+            println!("Fluid push: {:?}", fluid_push);
+            println!("Fluid n: {:?}", fluid_n);
+        }
+
         let water_height = fluid_height[0];
         let in_water = in_fluid[0];
-        let was_in_water = self.touching_water.load(Ordering::Relaxed);
         if in_water {
             if let Some(living) = caller.get_living_entity() {
                 living.fall_distance.store(0.0);
             }
-            if !was_in_water {
+            if !self.touching_water.load(Ordering::Relaxed) {
                 // TODO: Spawn splash particles
             }
         }
@@ -1151,8 +1175,7 @@ impl Entity {
             push = push * speed;
 
             let velo = self.velocity.load();
-            let g = 0.003;
-            if velo.x.abs() < g && velo.z.abs() < g && velo.length_squared() < 0.00002025 {
+            if velo.x.abs() < 0.003 && velo.z.abs() < 0.003 && velo.length_squared() < 0.00002025 {
                 push = push.normalize() * 0.0045;
             }
             self.velocity.store(velo + push);

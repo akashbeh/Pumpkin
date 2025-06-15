@@ -662,8 +662,9 @@ impl Player {
 
         self.last_attacked_ticks.fetch_add(1, Relaxed);
 
-        self.living_entity.entity.tick(self.clone(), server).await;
-        todo!();
+        // DEBUG
+        //self.living_entity.entity.tick(self.clone(), server).await;
+        //todo!();
         //Entity::handle_physics(&**self as &dyn EntityBase, 0.08, server).await; // Tick block collisions
         self.living_entity.base_tick().await;
 
@@ -1875,6 +1876,10 @@ impl EntityBase for Player {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         Some(&self.living_entity)
+    }
+
+    fn get_player(&self) -> Option<&Player> {
+        Some(&self)
     }
 
     async fn is_pushed_by_fluids(&self) -> bool {
