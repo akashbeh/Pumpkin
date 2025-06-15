@@ -37,7 +37,7 @@ use pumpkin_data::{
         get_state_by_state_id,
     },
     entity::{EntityStatus, EntityType},
-    fluid::Fluid,
+    fluid::{Fluid, FluidState},
     particle::Particle,
     sound::{Sound, SoundCategory},
     world::{RAW, WorldEvent},
@@ -1614,15 +1614,16 @@ impl World {
         Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId)
     }
 
-    pub async fn get_fluid_with_id(
+    pub async fn get_fluid_and_fluid_state(
         &self,
         position: &BlockPos,
-    ) -> (Fluid, u16) {
+    ) -> (Fluid, FluidState) {
         let id = self.get_block_state_id(position).await;
         /*let fluid = Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId);
         (fluid, id)*/
         let fluid = Fluid::from_state_id(id).unwrap_or(Fluid::EMPTY);
-        (fluid, id)
+        let state = fluid.get_state(id);
+        (fluid, state)
         // TODO: Waterlogged?
     }
 
@@ -1890,9 +1891,9 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    let (fluid, id) = self.get_fluid_with_id(&pos).await;
+                    let (fluid, state) = self.get_fluid_and_fluid_state(&pos).await;
                     if fluid.id != Fluid::EMPTY.id {
-                        let height = f64::from(fluid.get_height(id));
+                        let height = f64::from(state.height);
                         if height >= bounding_box.min.y {
                             collisions.push(fluid);
                         }
@@ -1912,9 +1913,9 @@ impl World {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    let (fluid, id) = self.get_fluid_with_id(&pos).await;
+                    let (fluid, state) = self.get_fluid_and_fluid_state(&pos).await;
                     if fluid.id != Fluid::EMPTY.id {
-                        let height = f64::from(fluid.get_height(id));
+                        let height = f64::from(state.height);
                         if height >= bounding_box.min.y {
                             return true;
                         }
@@ -1930,37 +1931,39 @@ impl World {
         &self,
         pos0: BlockPos,
         fluid0: &Fluid,
-        id0: u16,
+        state0: &FluidState,
     ) -> Vector3<f64> {
         let mut velo = Vector3::default();
 
         for dir in BlockDirection::horizontal() {
+            let mut amplitude = 0.0;
+
             let offset = dir.to_offset();
             let pos = pos0.offset(offset);
-            let (fluid, id) = self.get_fluid_with_id(&pos).await;
+            let block_state_id = self.get_block_state_id(&pos).await;
 
-            if fluid.id != Fluid::EMPTY.id && fluid.id != fluid0.id {
-                continue;
-            }
-            let height = fluid.get_height(id);
-            let mut amplitude = 0.0;
-            if height == 0.0 {
-                let (block, state) = get_block_and_state_by_state_id(id).unwrap_or((
+            let fluid = Fluid::from_state_id(block_state_id).unwrap_or(Fluid::EMPTY);
+            if fluid.id == Fluid::EMPTY.id {
+                let (block, block_state) = get_block_and_state_by_state_id(block_state_id).unwrap_or((
                     Block::AIR,
                     get_state_by_state_id(Block::AIR.default_state_id).unwrap(),
                 ));
-                let blocks_movement = state.is_solid() && block != Block::COBWEB && block != Block::BAMBOO_SAPLING;
+                let blocks_movement = block_state.is_solid() && block != Block::COBWEB && block != Block::BAMBOO_SAPLING;
                 if !blocks_movement {
                     let down_pos = pos.down();
-                    let (down_fluid, down_id) = self.get_fluid_with_id(&down_pos).await;
+                    let (down_fluid, down_state) = self.get_fluid_and_fluid_state(&down_pos).await;
                     if down_fluid.id == fluid0.id {
-                        let down_height = down_fluid.get_height(down_id);
-                        amplitude = f64::from(fluid0.get_height(id0) - down_height) + 0.8888889;
+                        amplitude = f64::from(state0.height - down_state.height) + 0.8888889;
                     }
                 }
-            } else if height > 0.0 {
-                amplitude = f64::from(fluid0.get_height(id0) - height);
+            } else {
+                if fluid.id != fluid0.id {
+                    continue;
+                }
+                let state = fluid.get_state(block_state_id);
+                amplitude = f64::from(state0.height - state.height);
             }
+
             if amplitude == 0.0 {
                 continue;
             }
@@ -1968,7 +1971,8 @@ impl World {
             velo.z += f64::from(offset.z) * amplitude;
         }
 
-        if fluid0.is_falling(id0) {
+        // TODO: FALLING
+        if state0.falling {
             for dir in BlockDirection::horizontal() {
                 let pos = pos0.offset(dir.to_offset());
                 if self.is_flow_blocked(fluid0.id, pos, dir).await
@@ -1991,7 +1995,8 @@ impl World {
 
     // FlowableFluid.isFlowBlocked()
     async fn is_flow_blocked(&self, fluid0_id: u16, pos: BlockPos, direction: BlockDirection) -> bool {
-        let (fluid, id) = self.get_fluid_with_id(&pos).await;
+        let id = self.get_block_state_id(&pos).await;
+        let fluid = Fluid::from_state_id(id).unwrap_or(Fluid::EMPTY);
 
         if fluid.id == fluid0_id {
             return false;

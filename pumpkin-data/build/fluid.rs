@@ -413,26 +413,21 @@ pub(crate) fn build() -> TokenStream {
 
         for (idx, state) in fluid.states.iter().enumerate() {
             // Check if this state is already in `unique_states` by comparing key fields
-            let already_exists = unique_states.iter().any(|s: &FluidState| {
+            let eq_state = |s: &FluidState| {
                 s.height == state.height
                     && s.level == state.level
                     && s.is_empty == state.is_empty
                     && s.blast_resistance == state.blast_resistance
                     && s.is_still == state.is_still
-            });
+            };
+            let already_exists = unique_states.iter().any(eq_state);
             if !already_exists {
                 unique_states.push(state.clone());
             }
             // Create a reference to the state
             let state_idx = unique_states
                 .iter()
-                .position(|s| {
-                    s.height == state.height
-                        && s.level == state.level
-                        && s.is_empty == state.is_empty
-                        && s.blast_resistance == state.blast_resistance
-                        && s.is_still == state.is_still
-                })
+                .position(eq_state)
                 .unwrap() as u16;
             optimized_fluids.push((
                 fluid.name.clone(),
@@ -454,6 +449,7 @@ pub(crate) fn build() -> TokenStream {
             #id_lit => Some(Self::#const_ident),
         });
 
+        let states_len = fluid.states.len();
         let fluid_states = fluid.states.iter().enumerate().map(|(index, state)| {
             let height = state.height;
             let level = state.level;
@@ -462,8 +458,8 @@ pub(crate) fn build() -> TokenStream {
             let block_state_id = state.block_state_id;
             let is_still = state.is_still;
             // Derive these values based on existing fields
-            let is_source = level == 1 && is_still; // Level 1 and still means it's a source
-            let falling = index > 7;
+            let is_source = level == 8 && is_still; // Level 8 and still means it's a source
+            let falling = index < states_len / 2;
 
             quote! {
                 FluidState {
@@ -543,7 +539,7 @@ pub(crate) fn build() -> TokenStream {
         }
     }
 
-    let unique_fluid_states = unique_states.iter().enumerate().map(|(index, state)| {
+    let unique_fluid_states = unique_states.iter().map(|state| {
         let height = state.height;
         let level = state.level;
         let is_empty = state.is_empty;
@@ -551,7 +547,7 @@ pub(crate) fn build() -> TokenStream {
         let block_state_id = state.block_state_id;
         let is_still = state.is_still;
         let is_source = level == 1 && is_still;
-        let falling = index > 7;
+        let falling = false;
         quote! {
             PartialFluidState {
                 height: #height,
@@ -719,25 +715,18 @@ pub(crate) fn build() -> TokenStream {
                 }
             }
 
-            // Added helper methods for fluid behavior
-            pub fn is_source(&self, state_id: u16) -> bool {
-                let idx = (state_id as usize) % self.states.len();
-                self.states[idx].is_source
+            // Improved helper methods for fluid behavior
+            pub const fn default_block_state_id(&self) -> u16 {
+                self.states[self.default_state_index as usize].block_state_id
             }
 
-            pub fn is_falling(&self, state_id: u16) -> bool {
-                let idx = (state_id as usize) % self.states.len();
-                self.states[idx].falling
-            }
-
-            pub fn get_level(&self, state_id: u16) -> i16 {
-                let idx = (state_id as usize) % self.states.len();
-                self.states[idx].level
-            }
-
-            pub fn get_height(&self, state_id: u16) -> f32 {
-                let idx = (state_id as usize) % self.states.len();
-                self.states[idx].height
+            pub fn get_state(&self, state_id: u16) -> FluidState {
+                let default_state_id = self.default_block_state_id();
+                if state_id < default_state_id || state_id >= default_state_id * 2 {
+                    panic!("Invalid state id {} for fluid {}", state_id, self.name);
+                }
+                let idx = (state_id % default_state_id) as usize;
+                self.states[self.states.len() - idx].clone()
             }
         }
 

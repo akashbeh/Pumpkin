@@ -46,8 +46,6 @@ use std::sync::{
     },
 };
 use tokio::sync::{Mutex, RwLock};
-// DEBUG
-use rand::Rng;
 
 use crate::world::World;
 
@@ -1072,10 +1070,10 @@ impl Entity {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
-                    let (fluid, id) = world.get_fluid_with_id(&pos).await;
+                    let (fluid, state) = world.get_fluid_and_fluid_state(&pos).await;
                     if fluid.id != Fluid::EMPTY.id {
 
-                        let marginal_height = f64::from(fluid.get_height(id)) + f64::from(y) - bounding_box.min.y;
+                        let marginal_height = f64::from(state.height) + f64::from(y) - bounding_box.min.y;
                         if marginal_height >= 0.0 {
                             let i = if fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id {
                                 1
@@ -1091,7 +1089,7 @@ impl Entity {
                                 continue;
                             }
 
-                            let mut fluid_velo = world.get_fluid_velocity(pos, &fluid, id).await;
+                            let mut fluid_velo = world.get_fluid_velocity(pos, &fluid, &state).await;
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
