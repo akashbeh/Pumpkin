@@ -1093,7 +1093,7 @@ impl Entity {
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
-                            println!("At {x}, {y}, {z}, Fluid velo: {fluid_velo:?}");
+                            //println!("At {x}, {y}, {z}, Fluid velo: {fluid_velo:?}");
                             fluid_push[i] = fluid_push[i] + fluid_velo;
                             fluid_n[i] += 1;
 
@@ -1124,12 +1124,12 @@ impl Entity {
         /*
         let mut rng = rand::thread_rng();
         let random: u8 = rng.gen_range(0..100);*/
-        if in_fluid[0] {
+        /*if in_fluid[0] {
             println!("Fluid height: {:?}", fluid_height);
             println!("In fluid: {:?}", in_fluid);
             println!("Fluid push: {:?}", fluid_push);
             println!("Fluid n: {:?}", fluid_n);
-        }
+        }*/
 
         let water_height = fluid_height[0];
         let in_water = in_fluid[0];

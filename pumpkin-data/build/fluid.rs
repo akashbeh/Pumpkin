@@ -450,7 +450,7 @@ pub(crate) fn build() -> TokenStream {
         });
 
         let states_len = fluid.states.len();
-        let fluid_states = fluid.states.iter().rev().enumerate().map(|(index, state)| {
+        let fluid_states = fluid.states.iter().enumerate().map(|(index, state)| {
             let height = state.height;
             let level = state.level;
             let is_empty = state.is_empty;
@@ -459,7 +459,7 @@ pub(crate) fn build() -> TokenStream {
             let is_still = state.is_still;
             // Derive these values based on existing fields
             let is_source = level == 8 && is_still; // Level 8 and still means it's a source
-            let falling = index < states_len / 2;
+            let falling = index >= states_len / 2;
 
             quote! {
                 FluidState {
@@ -716,24 +716,26 @@ pub(crate) fn build() -> TokenStream {
             }
 
             // Improved helper methods for fluid behavior
-            pub const fn default_state(&self) -> &FluidState {
-                &self.states[self.default_state_index as usize]
+            pub fn get_state_from_index(&self, index: usize) -> FluidState {
+                // The states end up ordered backwards due to EnumVariants
+                let real_index = self.states.len() - index - 1;
+                self.states[real_index].clone()
             }
 
-            pub const fn default_block_state_id(&self) -> u16 {
-                self.states[self.default_state_index as usize].block_state_id
+            pub fn default_state(&self) -> FluidState {
+                self.get_state_from_index(self.default_state_index as usize)
             }
 
             pub fn get_state(&self, state_id: u16) -> FluidState {
                 if self.id == 0 {
                     return self.states[0].clone();
                 }
-                let default_state_id = self.default_block_state_id();
+                let default_state_id = self.default_state().block_state_id;
                 if state_id < default_state_id || state_id >= default_state_id * 2 {
                     panic!("Invalid state id {} for fluid {}", state_id, self.name);
                 }
                 let idx = (state_id % default_state_id) as usize;
-                self.states[idx].clone()
+                self.get_state_from_index(idx)
             }
         }
 

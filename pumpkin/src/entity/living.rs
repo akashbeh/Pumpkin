@@ -409,7 +409,7 @@ impl LivingEntity {
             let speed = movement_speed * 0.216 / (slipperiness * slipperiness * slipperiness);
             (speed, slipperiness * 0.91)
         } else {
-            println!("Off ground");
+            //println!("Off ground");
             let speed = if let Some(player) = caller.get_player() {
                 player.get_off_ground_speed().await
             } else {
@@ -447,7 +447,7 @@ impl LivingEntity {
 
     // movement_speed is different for Player
     async fn travel_in_fluid(&self, caller: Arc<dyn EntityBase>, water: bool, movement_speed: f64) {
-        println!("Travel in fluid");
+        //println!("Travel in fluid");
         let movement_input = self.movement_input.load();
         let y0 = self.entity.pos.load().y;
         let falling = self.entity.velocity.load().y <= 0.0;
