@@ -1621,10 +1621,24 @@ impl World {
         let id = self.get_block_state_id(position).await;
         /*let fluid = Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId);
         (fluid, id)*/
-        let fluid = Fluid::from_state_id(id).unwrap_or(Fluid::EMPTY);
+        let Some(fluid) = Fluid::from_state_id(id) else {
+            if let Some(block) = get_block_by_state_id(id) {
+                if let Some(properties) = block.properties(id) {
+                    for (name, value) in properties.to_props() {
+                        if name == "waterlogged".to_string() && value == true.to_string() {
+                            let fluid = Fluid::FLOWING_WATER;
+                            let state = fluid.default_state().clone();
+                            return (fluid, state);
+                        }
+                    }
+                }
+            }
+            let fluid = Fluid::EMPTY;
+            let state = fluid.default_state().clone();
+            return (fluid, state);
+        };
         let state = fluid.get_state(id);
         (fluid, state)
-        // TODO: Waterlogged?
     }
 
     /// Gets the `BlockState` from the block registry. Returns Air if the block state was not found.

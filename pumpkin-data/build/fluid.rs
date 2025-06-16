@@ -450,7 +450,7 @@ pub(crate) fn build() -> TokenStream {
         });
 
         let states_len = fluid.states.len();
-        let fluid_states = fluid.states.iter().enumerate().map(|(index, state)| {
+        let fluid_states = fluid.states.iter().rev().enumerate().map(|(index, state)| {
             let height = state.height;
             let level = state.level;
             let is_empty = state.is_empty;
@@ -716,17 +716,24 @@ pub(crate) fn build() -> TokenStream {
             }
 
             // Improved helper methods for fluid behavior
+            pub const fn default_state(&self) -> &FluidState {
+                &self.states[self.default_state_index as usize]
+            }
+
             pub const fn default_block_state_id(&self) -> u16 {
                 self.states[self.default_state_index as usize].block_state_id
             }
 
             pub fn get_state(&self, state_id: u16) -> FluidState {
+                if self.id == 0 {
+                    return self.states[0].clone();
+                }
                 let default_state_id = self.default_block_state_id();
                 if state_id < default_state_id || state_id >= default_state_id * 2 {
                     panic!("Invalid state id {} for fluid {}", state_id, self.name);
                 }
                 let idx = (state_id % default_state_id) as usize;
-                self.states[self.states.len() - idx].clone()
+                self.states[idx].clone()
             }
         }
 
