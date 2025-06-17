@@ -122,6 +122,11 @@ pub trait EntityBase: Send + Sync {
         water creature entities: all fish
         */
     }
+    fn get_gravity(&self) -> f64;
+    //fn get_final_gravity(&self) -> f64 { if self.no_gravity { 0.0 } else { self.get_gravity() } }
+    fn is_flutterer(&self) -> bool {
+        false
+    }
 
     // Move by a delta, adjust for collisions, and send
     // TODO: MovementType for pistons etc
@@ -1231,6 +1236,7 @@ impl Entity {
         if dist < 1.0e-7 {
             return Vector3::default();
         }
+        println!("Movement input FOUND");
         let lv = if dist > 1.0 {
             movement_input.normalize()
         } else {
@@ -1316,6 +1322,10 @@ impl EntityBase for Entity {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         None
+    }
+
+    fn get_gravity(&self) -> f64 {
+        0.0
     }
 }
 

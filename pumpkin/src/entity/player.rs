@@ -1885,6 +1885,10 @@ impl EntityBase for Player {
     async fn is_pushed_by_fluids(&self) -> bool {
         !self.is_flying().await
     }
+
+    fn get_gravity(&self) -> f64 {
+        self.living_entity.get_gravity()
+    }
 }
 
 impl Player {

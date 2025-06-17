@@ -222,12 +222,8 @@ impl ToTokens for FluidPropertyStruct {
                         panic!("{} is not a valid fluid for {}", &fluid.name, #struct_name);
                     }
 
-                    let prop_index = self.to_index();
-                    if prop_index < fluid.states.len() as u16 {
-                        fluid.states[prop_index as usize].block_state_id
-                    } else {
-                        fluid.states[fluid.default_state_index as usize].block_state_id
-                    }
+                    let prop_index = self.to_index() as usize;
+                    fluid.states[prop_index].block_state_id
                 }
 
                 fn from_state_id(state_id: u16, fluid: &Fluid) -> Self {

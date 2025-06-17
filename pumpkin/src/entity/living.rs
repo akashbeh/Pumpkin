@@ -319,12 +319,12 @@ impl LivingEntity {
         }
     }
 
-    async fn get_effective_gravity(&self) -> f64 {
-        // If hasNoGravity() { 0.0 }
+    async fn get_effective_gravity(&self, caller: &Arc<dyn EntityBase>) -> f64 {
+        let final_gravity = caller.get_gravity();
         if self.entity.velocity.load().y <= 0.0 && self.has_effect(EffectType::SlowFalling).await {
-            0.01
+            final_gravity.min(0.01)
         } else {
-            GRAVITY
+            final_gravity
         }
     }
 
@@ -401,7 +401,7 @@ impl LivingEntity {
     }
 
     async fn travel_in_air(&self, caller: Arc<dyn EntityBase>, movement_speed: f64) {
-        //println!("Travel in air");
+        println!("Travel in air");
         // applyMovementInput
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
@@ -421,7 +421,7 @@ impl LivingEntity {
         self.entity.update_velocity_from_input(self.movement_input.load(), speed);
         self.apply_climbing_speed().await;
 
-        self.make_move(caller).await;
+        self.make_move(caller.clone()).await;
 
         let mut velo = self.entity.velocity.load();
         // TODO: Add powdered snow
@@ -430,28 +430,27 @@ impl LivingEntity {
         }
         let levitation = self.get_effect(EffectType::Levitation).await;
         if let Some(lev) = levitation {
-            velo.y += 0.05 * (lev.amplifier + 1) as f64;
+            velo.y += (0.05 * (lev.amplifier + 1) as f64 - velo.y) * 0.2;
         } else {
-            velo.y -= self.get_effective_gravity().await;
+            velo.y -= self.get_effective_gravity(&caller).await;
             // TODO: If world is not loaded: replace effective gravity with:
-            // if below world's bottom y then 0.1, else 0.0
+            // if below world's bottom y then -0.1, else 0.0
         }
         // If entity has no drag: store velo and return
 
         velo.x *= friction;
         velo.z *= friction;
-        // If flutterer: multiply y by friction instead of 0.98
-        velo.y *= 0.98;
+        velo.y *= if caller.is_flutterer() { friction } else { 0.98 };
         self.entity.velocity.store(velo);
     }
 
     // movement_speed is different for Player
     async fn travel_in_fluid(&self, caller: Arc<dyn EntityBase>, water: bool, movement_speed: f64) {
-        //println!("Travel in fluid");
+        println!("Travel in fluid");
         let movement_input = self.movement_input.load();
         let y0 = self.entity.pos.load().y;
         let falling = self.entity.velocity.load().y <= 0.0;
-        let gravity = self.get_effective_gravity().await;
+        let gravity = self.get_effective_gravity(&caller).await;
         if water {
             let mut friction = if self.entity.sprinting.load(Relaxed) {
                 0.9
@@ -690,6 +689,10 @@ impl EntityBase for LivingEntity {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         Some(self)
+    }
+
+    fn get_gravity(&self) -> f64 {
+        GRAVITY
     }
 }
 
