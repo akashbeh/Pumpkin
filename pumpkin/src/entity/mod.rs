@@ -135,6 +135,8 @@ pub trait EntityBase: Send + Sync {
         let living = self.get_living_entity();
 
         let final_move = entity.adjust_movement_for_collisions(motion).await;
+        println!("On ground: {}", entity.on_ground.load(Ordering::Relaxed));
+        println!("Horiz coll: {}", entity.horizontal_collision.load(Ordering::Relaxed));
 
         entity.move_pos(final_move);
         entity.velocity.store(final_move * velocity_multiplier);
@@ -856,6 +858,9 @@ impl Entity {
     }
 
     async fn adjust_movement_for_collisions(&self, movement: Vector3<f64>) -> Vector3<f64> {
+        self.on_ground.store(false, Ordering::Relaxed);
+        self.supporting_block_pos.store(None);
+        self.horizontal_collision.store(false, Ordering::Relaxed);
         if movement.length_squared() == 0.0 {
             return movement;
         }
@@ -903,8 +908,6 @@ impl Entity {
             }
             self.on_ground.store(supporting_block_pos.is_some(), Ordering::Relaxed);
             self.supporting_block_pos.store(supporting_block_pos);
-        } else {
-            println!("Zero y move");
         }
 
         let mut horizontal_collision = false;
