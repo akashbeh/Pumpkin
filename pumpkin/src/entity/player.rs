@@ -594,7 +594,7 @@ impl Player {
         if self
             .client
             .closed
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(Ordering::Relaxed)
         {
             return;
         }
@@ -663,10 +663,12 @@ impl Player {
         self.last_attacked_ticks.fetch_add(1, Relaxed);
 
         // DEBUG
-        //self.living_entity.entity.tick(self.clone(), server).await;
-        //todo!();
-        //Entity::handle_physics(&**self as &dyn EntityBase, 0.08, server).await; // Tick block collisions
-        self.living_entity.base_tick().await;
+        let is_spectator = self.gamemode.load() == GameMode::Spectator;
+        self.get_entity().no_clip.store(is_spectator, Ordering::Relaxed);
+        if is_spectator || self.get_entity().has_vehicle() {
+            self.get_entity().on_ground.store(false, Ordering::Relaxed);
+        }
+        self.living_entity.tick(self.clone(), server).await;
 
         self.hunger_manager.tick(self.as_ref()).await;
 
@@ -1714,22 +1716,23 @@ impl Player {
 
     pub async fn get_off_ground_speed(&self) -> f64 {
         let sprinting = self.get_entity().sprinting.load(Ordering::Relaxed);
-        let fly_speed = {
-            let abilities = self.abilities.lock().await;
-            abilities.flying.then_some(abilities.fly_speed as f64)
-        };
-        if let Some(flying) = fly_speed { // TODO: && Not in a vehicle
-            if sprinting {
-                flying * 2.0
-            } else {
-                flying
+        if !self.get_entity().has_vehicle() {
+            let fly_speed = {
+                let abilities = self.abilities.lock().await;
+                abilities.flying.then_some(abilities.fly_speed as f64)
+            };
+            if let Some(flying) = fly_speed {
+                return if sprinting {
+                    flying * 2.0
+                } else {
+                    flying
+                };
             }
+        }
+        if sprinting {
+            0.025999999
         } else {
-            if sprinting {
-                0.025999999
-            } else {
-                0.02
-            }
+            0.02
         }
     }
 

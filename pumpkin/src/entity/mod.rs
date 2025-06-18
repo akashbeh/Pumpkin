@@ -113,6 +113,7 @@ pub trait EntityBase: Send + Sync {
     async fn is_pushed_by_fluids(&self) -> bool {
         true
         // Implemented for player
+        // TODO:
         // Persistent projectile: !isInGround()
         // Drowned: !isSwimming()
         /*
@@ -126,31 +127,6 @@ pub trait EntityBase: Send + Sync {
     //fn get_final_gravity(&self) -> f64 { if self.no_gravity { 0.0 } else { self.get_gravity() } }
     fn is_flutterer(&self) -> bool {
         false
-    }
-
-    // Move by a delta, adjust for collisions, and send
-    // TODO: MovementType for pistons etc
-    async fn move_entity(&self, motion: Vector3<f64>, velocity_multiplier: f64) {
-        // FOR NOW: Skip if player
-        if self.get_player().is_some() {
-            return;
-        }
-
-        let entity = self.get_entity();
-        let living = self.get_living_entity();
-
-        let final_move = entity.adjust_movement_for_collisions(motion).await;
-
-        entity.move_pos(final_move);
-        entity.velocity.store(final_move * velocity_multiplier);
-
-        if let Some(live) = living {
-            live.update_fall_distance(final_move.y, entity.on_ground.load(Ordering::Relaxed), false)
-                .await;
-        }
-
-        entity.send_pos_rot().await;
-        entity.send_velocity().await;
     }
 }
 
@@ -220,6 +196,10 @@ pub struct Entity {
     pub portal_cooldown: AtomicU32,
 
     pub portal_manager: Mutex<Option<Mutex<PortalManager>>>,
+    /// If no_clip is true, the entity cannot collide with anything (e.g. spectator)
+    pub no_clip: AtomicBool,
+    /// Multiplies movement for one tick before being reset
+    pub movement_multiplier: AtomicCell<Vector3<f64>>,
 }
 
 impl Entity {
@@ -277,6 +257,8 @@ impl Entity {
             has_visual_fire: AtomicBool::new(false),
             portal_cooldown: AtomicU32::new(0),
             portal_manager: Mutex::new(None),
+            no_clip: AtomicBool::new(false),
+            movement_multiplier: AtomicCell::new(Vector3::default()),
         }
     }
 
@@ -754,72 +736,6 @@ impl Entity {
         self.invulnerable.load(Relaxed) || self.damage_immunities.contains(damage_type)
     }
 
-/*
-    // Returns whether entity is suffocating
-    pub async fn check_block_collision(entity_base: &dyn EntityBase, server: &Server) -> bool {
-        let entity = entity_base.get_entity();
-        let bounding_box = entity.bounding_box.load();
-
-        let mut suffocating = false;
-
-        let aabb = bounding_box.expand(-0.001, -0.001, -0.001);
-        let blockpos = aabb.min_block_pos();
-        let blockpos1 = aabb.max_block_pos();
-        let world = entity.world.read().await;
-
-        let mut eye_level_box = aabb;
-        let eye_height = f64::from(entity.standing_eye_height);
-        eye_level_box.min.y = eye_height;
-        eye_level_box.max.y = eye_height;
-
-        for x in blockpos.0.x..=blockpos1.0.x {
-            for y in blockpos.0.y..=blockpos1.0.y {
-                for z in blockpos.0.z..=blockpos1.0.z {
-                    let pos = BlockPos::new(x, y, z);
-                    let (block, state) = world.get_block_and_block_state(&pos).await;
-
-                    let mut collided = false;
-                    if state.is_full_cube() {
-                        collided = true;
-
-                        if !suffocating && state.is_solid() {
-                            suffocating = COLLISION_SHAPES[state.collision_shapes[0] as usize]
-                                .at_pos(pos)
-                                .intersects(&eye_level_box);
-                        }
-                    } else if !state.is_air() && !state.collision_shapes.is_empty() {
-                        'shapes: for shape in state.collision_shapes {
-                            let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(pos);
-                            if collision_shape.intersects(&bounding_box) {
-                                collided = true;
-
-                                if !suffocating && state.is_solid() {
-                                    suffocating = collision_shape.intersects(&eye_level_box);
-                                }
-                            }
-                        }
-                    }
-
-                    if collided {
-                        world
-                            .block_registry
-                            .on_entity_collision(block, &world, entity_base, pos, state, server)
-                            .await;
-                    }
-
-                    if let Ok(fluid) = world.get_fluid(&pos).await {
-                        // TODO: Check fluid level
-                        world
-                            .block_registry
-                            .on_entity_collision_fluid(&fluid, entity_base)
-                            .await;
-                    }
-                }
-            }
-        }
-        suffocating
-    }
-*/
     async fn teleport(
         &self,
         position: Option<Vector3<f64>>,
@@ -1013,7 +929,7 @@ impl Entity {
     }
 
     // Returns whether the entity's eye level is in a wall
-    async fn check_block_collisions(&self, caller: &Arc<dyn EntityBase>, server: &Server) -> bool {
+    async fn tick_block_collisions(&self, caller: &Arc<dyn EntityBase>, server: &Server) -> bool {
         let bounding_box = self.bounding_box.load();
 
         let mut suffocating = false;
@@ -1033,12 +949,10 @@ impl Entity {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let (block, state) = world.get_block_and_block_state(&pos).await;
-                    let collided = World::check_collision(&bounding_box, pos, &state, 
-                        (!suffocating && state.is_solid()).then_some(
-                            |collision_shape: &BoundingBox| {
-                                suffocating = collision_shape.intersects(&eye_level_box);
-                            }
-                        )
+                    let collided = World::check_collision(&bounding_box, pos, &state, !suffocating && state.is_solid(),
+                        |collision_shape: &BoundingBox| {
+                            suffocating = collision_shape.intersects(&eye_level_box);
+                        }
                     );
 
                     if collided {
@@ -1263,6 +1177,50 @@ impl Entity {
         } else {
             f
         }
+    }
+
+    pub fn has_vehicle(&self) -> bool {
+        // TODO
+        false
+    }
+
+    // Move by a delta, adjust for collisions, and send
+    // Does not send movement. That must be done separately
+    async fn move_entity(&self, caller: Arc<dyn EntityBase>, mut motion: Vector3<f64>) {
+        // TODO: Player movement checking (anticheat)
+        if caller.get_player().is_some() {
+            return;
+        }
+
+        if self.no_clip.load(Ordering::Relaxed) {
+            self.move_pos(motion);
+            return;
+        }
+
+        let movement_multiplier = self.movement_multiplier.swap(Vector3::default());
+        if movement_multiplier.length_squared() > 1.0e-7 {
+            motion = motion.multiply(
+                movement_multiplier.x,
+                movement_multiplier.y,
+                movement_multiplier.z
+            );
+            self.velocity.store(Vector3::default());
+        }
+
+        let final_move = self.adjust_movement_for_collisions(motion).await;
+
+        self.move_pos(final_move);
+        let velocity_multiplier = f64::from(self.get_velocity_multiplier().await);
+        self.velocity.store(final_move * velocity_multiplier);
+
+        if let Some(living) = caller.get_living_entity() {
+            living.update_fall_distance(final_move.y, self.on_ground.load(Ordering::Relaxed), false)
+                .await;
+        }
+    }
+
+    pub async fn push_out_of_blocks(&self, pos: Vector3<f64>) {
+        todo!();
     }
 }
 

@@ -2032,56 +2032,16 @@ impl World {
 
         state.is_side_solid(direction)
     }
-/*
-    // For adjusting movement
-    pub async fn get_block_collisions(
-        self: &Arc<Self>,
-        bounding_box: BoundingBox,
-    ) -> Vec<BoundingBox> {
-        let mut collisions = Vec::new();
 
-        let min = bounding_box.min_block_pos();
-        let max = bounding_box.max_block_pos();
-
-        for x in min.0.x..=max.0.x {
-            for y in min.0.y..=max.0.y {
-                for z in min.0.z..=max.0.z {
-                    let block_pos = BlockPos::new(x, y, z);
-                    let state = self.get_block_state(&block_pos).await;
-
-                    if state.is_full_cube() {
-                        collisions.push(
-                            COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(block_pos),
-                        );
-                        continue;
-                    }
-
-                    if state.is_air() || state.collision_shapes.is_empty() {
-                        continue;
-                    }
-
-                    for shape in state.collision_shapes {
-                        let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(block_pos);
-                        if collision_shape.intersects(&bounding_box) {
-                            collisions.push(collision_shape);
-                        }
-                    }
-                }
-            }
-        }
-
-        collisions
-    }
-*/
-    pub fn check_collision<F>(bounding_box: &BoundingBox, pos: BlockPos, state: &BlockState, mut use_collision_shape: Option<F>) -> bool
+    pub fn check_collision<F>(bounding_box: &BoundingBox, pos: BlockPos, state: &BlockState, use_collision_shape: bool, mut using_collision_shape: F) -> bool
     where F: FnMut(&BoundingBox) {
         let mut collided = false;
         if state.is_full_cube() {
             collided = true;
 
-            if let Some(mut function) = use_collision_shape {
+            if use_collision_shape {
                 let collision_shape = COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(pos);
-                function(&collision_shape);
+                using_collision_shape(&collision_shape);
             }
         } else if !state.is_air() && !state.collision_shapes.is_empty() {
             'shapes: for shape in state.collision_shapes {
@@ -2089,11 +2049,10 @@ impl World {
                 if collision_shape.intersects(bounding_box) {
                     collided = true;
 
-                    if let Some(ref mut function) = use_collision_shape {
-                        function(&collision_shape);
-                    } else {
+                    if !use_collision_shape {
                         break 'shapes;
                     }
+                    using_collision_shape(&collision_shape);
                 }
             }
         }
@@ -2108,6 +2067,7 @@ impl World {
         let mut collisions = Vec::new();
         let mut positions = Vec::new();
 
+        // Include downwards for fences
         let min = bounding_box.shift(Vector3::new(0.0, -0.50001, 0.0)).min_block_pos();
         let max = bounding_box.max_block_pos();
         for x in min.0.x..=max.0.x {
@@ -2115,9 +2075,9 @@ impl World {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let state = self.get_block_state(&pos).await;
-                    let collided = Self::check_collision(&bounding_box, pos, &state, Some(|collision_shape: &BoundingBox|
+                    let collided = Self::check_collision(&bounding_box, pos, &state, true, |collision_shape: &BoundingBox|
                         { collisions.push(*collision_shape); }
-                    ));
+                    );
                     if collided {
                         positions.push((collisions.len(), pos));
                     }
@@ -2125,6 +2085,19 @@ impl World {
             }
         }
         (collisions, positions)
+    }
+
+    pub async fn is_space_empty(&self, bounding_box: BoundingBox) -> bool {
+        let min = bounding_box.min_block_pos();
+        let max = bounding_box.max_block_pos();
+        for pos in BlockPos::iterate(min, max) {
+            let state = self.get_block_state(&pos).await;
+            let collided = Self::check_collision(&bounding_box, pos, &state, false, |_| ());
+            if collided {
+                return true;
+            }
+        }
+        false
     }
 
     pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {

@@ -53,8 +53,6 @@ pub struct LivingEntity {
     pub climbing: AtomicBool,
     /// The position where the entity was last climbing, used for death messages
     pub climbing_pos: AtomicCell<Option<BlockPos>>,
-    /// If no_clip is true, the entity cannot collide with anything (e.g. spectator)
-    pub no_clip: AtomicBool,
     water_movement_speed_multiplier: f32,
 }
 impl LivingEntity {
@@ -83,7 +81,6 @@ impl LivingEntity {
             climbing_pos: AtomicCell::new(None),
             movement_input: AtomicCell::new(Vector3::default()),
             movement_speed: AtomicCell::new(default_movement_speed),
-            no_clip: AtomicBool::new(false),
             water_movement_speed_multiplier,
         }
     }
@@ -218,15 +215,6 @@ impl LivingEntity {
         self.last_damage_taken.store(amount);
         amount > 0.0
     }
-
-    // Check if the entity is in water
-    /*
-    pub async fn is_in_water(&self) -> bool {
-        let world = self.entity.world.read().await;
-        let block_pos = self.entity.block_pos.load();
-        world.get_block(&block_pos).await == Block::WATER
-    }
-    */
 
     pub async fn update_fall_distance(
         &self,
@@ -391,7 +379,7 @@ impl LivingEntity {
             self.travel_in_air(caller.clone()).await
         }
         self.entity.tick_block_underneath(&caller).await;
-        let suffocating = self.entity.check_block_collisions(&caller, server).await;
+        let suffocating = self.entity.tick_block_collisions(&caller, server).await;
         if suffocating {
             self.damage(1.0, DamageType::IN_WALL).await;
         }
@@ -518,11 +506,11 @@ impl LivingEntity {
     }
 
     async fn make_move(&self, caller: Arc<dyn EntityBase>) {
-        let velocity_multiplier = self.entity.get_velocity_multiplier().await as f64;
-        caller.move_entity(
-            self.entity.velocity.load(),
-            velocity_multiplier,
+        self.entity.move_entity(
+            caller,
+            self.entity.velocity.load()
         ).await;
+
         self.check_climbing().await;
     }
 
@@ -650,6 +638,9 @@ impl EntityBase for LivingEntity {
         self.base_tick().await;
 
         self.tick_movement(server, caller).await;
+
+        self.entity.send_pos_rot().await;
+        self.entity.send_velocity().await;
     }
 
     async fn damage(&self, amount: f32, damage_type: DamageType) -> bool {
