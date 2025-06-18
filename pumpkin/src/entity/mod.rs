@@ -1129,6 +1129,7 @@ impl Entity {
         self.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
 
         // DEBUG
+        // TODO: Check fluid.default_state_index
         /*
         let mut rng = rand::thread_rng();
         let random: u8 = rng.gen_range(0..100);*/
