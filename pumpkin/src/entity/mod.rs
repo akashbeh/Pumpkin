@@ -131,12 +131,15 @@ pub trait EntityBase: Send + Sync {
     // Move by a delta, adjust for collisions, and send
     // TODO: MovementType for pistons etc
     async fn move_entity(&self, motion: Vector3<f64>, velocity_multiplier: f64) {
+        // FOR NOW: Skip if player
+        if self.get_player().is_some() {
+            return;
+        }
+
         let entity = self.get_entity();
         let living = self.get_living_entity();
 
         let final_move = entity.adjust_movement_for_collisions(motion).await;
-        println!("On ground: {}", entity.on_ground.load(Ordering::Relaxed));
-        println!("Horiz coll: {}", entity.horizontal_collision.load(Ordering::Relaxed));
 
         entity.move_pos(final_move);
         entity.velocity.store(final_move * velocity_multiplier);
@@ -146,11 +149,8 @@ pub trait EntityBase: Send + Sync {
                 .await;
         }
 
-        //entity.look_at(entity.velocity.load()).await;
         entity.send_pos_rot().await;
         entity.send_velocity().await;
-
-        //entity.debug_loc().await;
     }
 }
 
@@ -1101,7 +1101,6 @@ impl Entity {
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
-                            //println!("At {x}, {y}, {z}, Fluid velo: {fluid_velo:?}");
                             fluid_push[i] = fluid_push[i] + fluid_velo;
                             fluid_n[i] += 1;
 
@@ -1127,18 +1126,6 @@ impl Entity {
         };
         self.push_by_fluid(0.014, fluid_push[0], fluid_n[0]);
         self.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
-
-        // DEBUG
-        // TODO: Check fluid.default_state_index
-        /*
-        let mut rng = rand::thread_rng();
-        let random: u8 = rng.gen_range(0..100);*/
-        /*if in_fluid[0] {
-            println!("Fluid height: {:?}", fluid_height);
-            println!("In fluid: {:?}", in_fluid);
-            println!("Fluid push: {:?}", fluid_push);
-            println!("Fluid n: {:?}", fluid_n);
-        }*/
 
         let water_height = fluid_height[0];
         let in_water = in_fluid[0];
@@ -1240,7 +1227,6 @@ impl Entity {
         if dist < 1.0e-7 {
             return Vector3::default();
         }
-        println!("Movement input FOUND");
         let lv = if dist > 1.0 {
             movement_input.normalize()
         } else {

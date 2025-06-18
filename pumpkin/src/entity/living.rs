@@ -53,6 +53,8 @@ pub struct LivingEntity {
     pub climbing: AtomicBool,
     /// The position where the entity was last climbing, used for death messages
     pub climbing_pos: AtomicCell<Option<BlockPos>>,
+    /// If no_clip is true, the entity cannot collide with anything (e.g. spectator)
+    pub no_clip: AtomicBool,
     water_movement_speed_multiplier: f32,
 }
 impl LivingEntity {
@@ -79,9 +81,10 @@ impl LivingEntity {
             jumping_cooldown: AtomicU8::new(0),
             climbing: AtomicBool::new(false),
             climbing_pos: AtomicCell::new(None),
-            water_movement_speed_multiplier,
             movement_input: AtomicCell::new(Vector3::default()),
             movement_speed: AtomicCell::new(default_movement_speed),
+            no_clip: AtomicBool::new(false),
+            water_movement_speed_multiplier,
         }
     }
 
@@ -332,8 +335,6 @@ impl LivingEntity {
         if self.jumping_cooldown.load(Relaxed) != 0 {
             self.jumping_cooldown.fetch_sub(1, Relaxed);
         }
-        // For a player, it's the entity attribute
-        let movement_speed = self.movement_speed.load();
         let should_swim_in_fluids = if let Some(player) = caller.get_player() {
             if player.is_flying().await {
                 false
@@ -383,15 +384,11 @@ impl LivingEntity {
         if (touching_water || self.entity.touching_lava.load(Relaxed)) && should_swim_in_fluids && self.entity.entity_type != EntityType::STRIDER {
             self.travel_in_fluid(
                 caller.clone(),
-                touching_water,
-                movement_speed
+                touching_water
             ).await;
         } else {
             // TODO: Gliding
-            self.travel_in_air(
-                caller.clone(),
-                movement_speed
-            ).await;
+            self.travel_in_air(caller.clone()).await
         }
         self.entity.tick_block_underneath(&caller).await;
         let suffocating = self.entity.check_block_collisions(&caller, server).await;
@@ -400,16 +397,14 @@ impl LivingEntity {
         }
     }
 
-    async fn travel_in_air(&self, caller: Arc<dyn EntityBase>, movement_speed: f64) {
-        println!("Travel in air");
+    async fn travel_in_air(&self, caller: Arc<dyn EntityBase>) {
         // applyMovementInput
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
             let slipperiness = self.entity.get_block_with_y_offset(0.500001).await.1.slipperiness as f64;
-            let speed = movement_speed * 0.216 / (slipperiness * slipperiness * slipperiness);
+            let speed = self.movement_speed.load() * 0.216 / (slipperiness * slipperiness * slipperiness);
             (speed, slipperiness * 0.91)
         } else {
-            //println!("Off ground");
             let speed = if let Some(player) = caller.get_player() {
                 player.get_off_ground_speed().await
             } else {
@@ -444,9 +439,7 @@ impl LivingEntity {
         self.entity.velocity.store(velo);
     }
 
-    // movement_speed is different for Player
-    async fn travel_in_fluid(&self, caller: Arc<dyn EntityBase>, water: bool, movement_speed: f64) {
-        println!("Travel in fluid");
+    async fn travel_in_fluid(&self, caller: Arc<dyn EntityBase>, water: bool) {
         let movement_input = self.movement_input.load();
         let y0 = self.entity.pos.load().y;
         let falling = self.entity.velocity.load().y <= 0.0;
@@ -464,7 +457,7 @@ impl LivingEntity {
                     water_movement_efficiency *= 0.5;
                 }
                 friction += (0.54600006 - friction) * water_movement_efficiency;
-                speed += (movement_speed - speed) * water_movement_efficiency;
+                speed += (self.movement_speed.load() - speed) * water_movement_efficiency;
             }
             if self.has_effect(EffectType::DolphinsGrace).await {
                 friction = 0.96;
@@ -526,7 +519,6 @@ impl LivingEntity {
 
     async fn make_move(&self, caller: Arc<dyn EntityBase>) {
         let velocity_multiplier = self.entity.get_velocity_multiplier().await as f64;
-        //println!("Velo mult: {}", velocity_multiplier);
         caller.move_entity(
             self.entity.velocity.load(),
             velocity_multiplier,
@@ -569,7 +561,6 @@ impl LivingEntity {
                 }
             }
         }
-        //println!("Not climbing");
         self.climbing.store(false, Relaxed);
         if self.entity.on_ground.load(Relaxed) {
             self.climbing_pos.store(None);

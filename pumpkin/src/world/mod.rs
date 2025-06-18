@@ -2108,8 +2108,7 @@ impl World {
         let mut collisions = Vec::new();
         let mut positions = Vec::new();
 
-        let mut min = bounding_box.min_block_pos();
-        min.0.y -= 1;
+        let min = bounding_box.shift(Vector3::new(0.0, -0.50001, 0.0)).min_block_pos();
         let max = bounding_box.max_block_pos();
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
