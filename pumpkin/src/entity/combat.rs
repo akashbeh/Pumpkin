@@ -51,11 +51,9 @@ impl AttackType {
 pub fn handle_knockback(attacker: &Entity, victim: &LivingEntity, strength: f64) {
     let angle = attacker.pos.load().sub(&victim.entity.pos.load());
 
-    victim.entity.apply_knockback(
-        strength * 0.5,
-        angle.x,
-        angle.z
-    );
+    victim
+        .entity
+        .apply_knockback(strength * 0.5, angle.x, angle.z);
     let velocity = attacker.velocity.load();
     attacker.velocity.store(velocity.multiply(0.6, 1.0, 0.6));
 }

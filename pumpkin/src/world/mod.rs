@@ -1606,21 +1606,13 @@ impl World {
         get_block_by_state_id(id).unwrap_or(Block::AIR)
     }
 
-    pub async fn get_fluid(
-        &self,
-        position: &BlockPos,
-    ) -> Result<Fluid, GetBlockError> {
+    pub async fn get_fluid(&self, position: &BlockPos) -> Result<Fluid, GetBlockError> {
         let id = self.get_block_state_id(position).await;
         Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId)
     }
 
-    pub async fn get_fluid_and_fluid_state(
-        &self,
-        position: &BlockPos,
-    ) -> (Fluid, FluidState) {
+    pub async fn get_fluid_and_fluid_state(&self, position: &BlockPos) -> (Fluid, FluidState) {
         let id = self.get_block_state_id(position).await;
-        /*let fluid = Fluid::from_state_id(id).ok_or(GetBlockError::InvalidBlockId);
-        (fluid, id)*/
         let Some(fluid) = Fluid::from_state_id(id) else {
             if let Some(block) = get_block_by_state_id(id) {
                 if let Some(properties) = block.properties(id) {
@@ -1958,11 +1950,14 @@ impl World {
 
             let fluid = Fluid::from_state_id(block_state_id).unwrap_or(Fluid::EMPTY);
             if fluid.id == Fluid::EMPTY.id {
-                let (block, block_state) = get_block_and_state_by_state_id(block_state_id).unwrap_or((
-                    Block::AIR,
-                    get_state_by_state_id(Block::AIR.default_state_id).unwrap(),
-                ));
-                let blocks_movement = block_state.is_solid() && block != Block::COBWEB && block != Block::BAMBOO_SAPLING;
+                let (block, block_state) = get_block_and_state_by_state_id(block_state_id)
+                    .unwrap_or((
+                        Block::AIR,
+                        get_state_by_state_id(Block::AIR.default_state_id).unwrap(),
+                    ));
+                let blocks_movement = block_state.is_solid()
+                    && block != Block::COBWEB
+                    && block != Block::BAMBOO_SAPLING;
                 if !blocks_movement {
                     let down_pos = pos.down();
                     let (down_fluid, down_state) = self.get_fluid_and_fluid_state(&down_pos).await;
@@ -2008,7 +2003,12 @@ impl World {
     }
 
     // FlowableFluid.isFlowBlocked()
-    async fn is_flow_blocked(&self, fluid0_id: u16, pos: BlockPos, direction: BlockDirection) -> bool {
+    async fn is_flow_blocked(
+        &self,
+        fluid0_id: u16,
+        pos: BlockPos,
+        direction: BlockDirection,
+    ) -> bool {
         let id = self.get_block_state_id(&pos).await;
         let fluid = Fluid::from_state_id(id).unwrap_or(Fluid::EMPTY);
 
@@ -2033,14 +2033,23 @@ impl World {
         state.is_side_solid(direction)
     }
 
-    pub fn check_collision<F>(bounding_box: &BoundingBox, pos: BlockPos, state: &BlockState, use_collision_shape: bool, mut using_collision_shape: F) -> bool
-    where F: FnMut(&BoundingBox) {
+    pub fn check_collision<F>(
+        bounding_box: &BoundingBox,
+        pos: BlockPos,
+        state: &BlockState,
+        use_collision_shape: bool,
+        mut using_collision_shape: F,
+    ) -> bool
+    where
+        F: FnMut(&BoundingBox),
+    {
         let mut collided = false;
         if state.is_full_cube() {
             collided = true;
 
             if use_collision_shape {
-                let collision_shape = COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(pos);
+                let collision_shape =
+                    COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(pos);
                 using_collision_shape(&collision_shape);
             }
         } else if !state.is_air() && !state.collision_shapes.is_empty() {
@@ -2068,15 +2077,21 @@ impl World {
         let mut positions = Vec::new();
 
         // Include downwards for fences
-        let min = bounding_box.shift(Vector3::new(0.0, -0.50001, 0.0)).min_block_pos();
+        let min = BlockPos::floored(bounding_box.min.sub_raw(0.0, -0.50001, 0.0));
         let max = bounding_box.max_block_pos();
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let state = self.get_block_state(&pos).await;
-                    let collided = Self::check_collision(&bounding_box, pos, &state, true, |collision_shape: &BoundingBox|
-                        { collisions.push(*collision_shape); }
+                    let collided = Self::check_collision(
+                        &bounding_box,
+                        pos,
+                        &state,
+                        true,
+                        |collision_shape: &BoundingBox| {
+                            collisions.push(*collision_shape);
+                        },
                     );
                     if collided {
                         positions.push((collisions.len(), pos));

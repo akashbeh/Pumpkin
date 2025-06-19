@@ -6,13 +6,8 @@ use crossbeam::atomic::AtomicCell;
 use living::LivingEntity;
 use player::Player;
 use pumpkin_data::{
-    Block,
-    BlockDirection,
-    BlockState,
-    block_properties::{
-        BlockProperties, Facing, HorizontalFacing,
-        OakFenceGateLikeProperties
-    },
+    Block, BlockDirection, BlockState,
+    block_properties::{BlockProperties, Facing, HorizontalFacing, OakFenceGateLikeProperties},
     damage::DamageType,
     entity::{EntityPose, EntityType},
     fluid::Fluid,
@@ -109,7 +104,9 @@ pub trait EntityBase: Send + Sync {
     async fn on_player_collision(&self, _player: &Arc<Player>) {}
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
-    fn get_player(&self) -> Option<&Player> { None }
+    fn get_player(&self) -> Option<&Player> {
+        None
+    }
 
     async fn is_pushed_by_fluids(&self) -> bool {
         true
@@ -336,9 +333,9 @@ impl Entity {
     }
 
     /// Changes this entity's pitch and yaw to look at target
-    pub async fn look_at(&self, target: Vector3<f64>) {
+    pub async fn look_at(&self, target_pos: Vector3<f64>) {
         let position = self.pos.load();
-        let delta = target.sub(&position);
+        let delta = target_pos.sub(&position);
         let root = delta.x.hypot(delta.z);
         let pitch = wrap_degrees(-delta.y.atan2(root) as f32 * 180.0 / f32::consts::PI);
         let yaw = wrap_degrees((delta.z.atan2(delta.x) as f32 * 180.0 / f32::consts::PI) - 90.0);
@@ -800,7 +797,7 @@ impl Entity {
         // Y-Axis adjustment
         if movement.get_axis(Axis::Y) != 0.0 {
             let mut max_time = 1.0;
-            
+
             let mut positions = block_positions.into_iter();
             let (mut collisions_len, mut position) = positions.next().unwrap();
             let mut supporting_block_pos = None;
@@ -825,7 +822,8 @@ impl Entity {
                 let changed_component = adjusted_movement.get_axis(Axis::Y) * max_time;
                 adjusted_movement.set_axis(Axis::Y, changed_component);
             }
-            self.on_ground.store(supporting_block_pos.is_some(), Ordering::Relaxed);
+            self.on_ground
+                .store(supporting_block_pos.is_some(), Ordering::Relaxed);
             self.supporting_block_pos.store(supporting_block_pos);
         }
 
@@ -853,7 +851,8 @@ impl Entity {
                 horizontal_collision = true;
             }
         }
-        self.horizontal_collision.store(horizontal_collision, Ordering::Relaxed);
+        self.horizontal_collision
+            .store(horizontal_collision, Ordering::Relaxed);
 
         adjusted_movement
     }
@@ -910,7 +909,10 @@ impl Entity {
     async fn tick_block_underneath(&self, caller: &Arc<dyn EntityBase>) {
         let world = self.world.read().await;
         let (pos, block, state) = self.get_block_with_y_offset(0.2).await;
-        world.block_registry.on_stepped_on(&world, caller.as_ref(), pos, block, state).await;
+        world
+            .block_registry
+            .on_stepped_on(&world, caller.as_ref(), pos, block, state)
+            .await;
         // TODO: Add this to on_stepped_on
         /*
         if self.on_ground.load(Ordering::Relaxed) {
@@ -952,10 +954,14 @@ impl Entity {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let (block, state) = world.get_block_and_block_state(&pos).await;
-                    let collided = World::check_collision(&bounding_box, pos, &state, !suffocating && state.is_solid(),
+                    let collided = World::check_collision(
+                        &bounding_box,
+                        pos,
+                        &state,
+                        !suffocating && state.is_solid(),
                         |collision_shape: &BoundingBox| {
                             suffocating = collision_shape.intersects(&eye_level_box);
-                        }
+                        },
                     );
 
                     if collided {
@@ -997,10 +1003,12 @@ impl Entity {
                     let pos = BlockPos::new(x, y, z);
                     let (fluid, state) = world.get_fluid_and_fluid_state(&pos).await;
                     if fluid.id != Fluid::EMPTY.id {
-
-                        let marginal_height = f64::from(state.height) + f64::from(y) - bounding_box.min.y;
+                        let marginal_height =
+                            f64::from(state.height) + f64::from(y) - bounding_box.min.y;
                         if marginal_height >= 0.0 {
-                            let i = usize::from(fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id);
+                            let i = usize::from(
+                                fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id,
+                            );
 
                             fluid_height[i] = fluid_height[i].max(marginal_height);
                             in_fluid[i] = true;
@@ -1010,7 +1018,8 @@ impl Entity {
                                 continue;
                             }
 
-                            let mut fluid_velo = world.get_fluid_velocity(pos, &fluid, &state).await;
+                            let mut fluid_velo =
+                                world.get_fluid_velocity(pos, &fluid, &state).await;
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
@@ -1032,7 +1041,9 @@ impl Entity {
                 .await;
         }
 
-        let lava_speed = if self.world.read().await.dimension_type == pumpkin_registry::DimensionType::TheNether {
+        let lava_speed = if self.world.read().await.dimension_type
+            == pumpkin_registry::DimensionType::TheNether
+        {
             0.007
         } else {
             0.002_333_333
@@ -1078,14 +1089,18 @@ impl Entity {
             push = push * speed;
 
             let velo = self.velocity.load();
-            if velo.x.abs() < 0.003 && velo.z.abs() < 0.003 && velo.length_squared() < 0.000_020_25 {
+            if velo.x.abs() < 0.003 && velo.z.abs() < 0.003 && velo.length_squared() < 0.000_020_25
+            {
                 push = push.normalize() * 0.0045;
             }
             self.velocity.store(velo + push);
         }
     }
 
-    async fn get_pos_with_y_offset(&self, offset: f64) -> (BlockPos, Option<Block>, Option<BlockState>) {
+    async fn get_pos_with_y_offset(
+        &self,
+        offset: f64,
+    ) -> (BlockPos, Option<Block>, Option<BlockState>) {
         if let Some(mut supporting_block) = self.supporting_block_pos.load() {
             if offset > 1.0e-5 {
                 let (block, state) = self
@@ -1096,9 +1111,13 @@ impl Entity {
                     .await;
                 if let Some(props) = block.properties(state.id) {
                     let name = props.name();
-                    if offset <= 0.5 && (name == "OakFenceLikeProperties" ||
-                    name == "ResinBrickWallLikeProperties" ||
-                    name == "OakFenceGateLikeProperties" && OakFenceGateLikeProperties::from_state_id(state.id, &block).r#open) {
+                    if offset <= 0.5
+                        && (name == "OakFenceLikeProperties"
+                            || name == "ResinBrickWallLikeProperties"
+                            || name == "OakFenceGateLikeProperties"
+                                && OakFenceGateLikeProperties::from_state_id(state.id, &block)
+                                    .r#open)
+                    {
                         return (supporting_block, Some(block), Some(state));
                     }
                 }
@@ -1140,18 +1159,18 @@ impl Entity {
         if dist < 1.0e-7 {
             return Vector3::default();
         }
-        let lv = if dist > 1.0 {
+        let input = if dist > 1.0 {
             movement_input.normalize()
         } else {
             movement_input * speed
         };
-        let h = yaw.sin();
-        let i = yaw.cos();
+        let sin = yaw.sin();
+        let cos = yaw.cos();
 
         Vector3::new(
-            lv.x * i - lv.z * h,
-            lv.y,
-            lv.z * i + lv.x * h,
+            input.x * cos - input.z * sin,
+            input.y,
+            input.z * cos + input.x * sin,
         )
     }
 
@@ -1171,13 +1190,16 @@ impl Entity {
     #[allow(clippy::float_cmp)]
     async fn get_jump_velocity_multiplier(&self) -> f32 {
         let world = self.world.read().await;
-        let f = world.get_block(&self.block_pos.load()).await.jump_velocity_multiplier;
-        let g = self.get_block_with_y_offset(0.500_001).await.1.jump_velocity_multiplier;
-        if f == 1f32 {
-            g
-        } else {
-            f
-        }
+        let f = world
+            .get_block(&self.block_pos.load())
+            .await
+            .jump_velocity_multiplier;
+        let g = self
+            .get_block_with_y_offset(0.500_001)
+            .await
+            .1
+            .jump_velocity_multiplier;
+        if f == 1f32 { g } else { f }
     }
 
     pub fn has_vehicle(&self) -> bool {
@@ -1203,7 +1225,7 @@ impl Entity {
             motion = motion.multiply(
                 movement_multiplier.x,
                 movement_multiplier.y,
-                movement_multiplier.z
+                movement_multiplier.z,
             );
             self.velocity.store(Vector3::default());
         }
@@ -1215,7 +1237,8 @@ impl Entity {
         self.velocity.store(final_move * velocity_multiplier);
 
         if let Some(living) = caller.get_living_entity() {
-            living.update_fall_distance(final_move.y, self.on_ground.load(Ordering::Relaxed), false)
+            living
+                .update_fall_distance(final_move.y, self.on_ground.load(Ordering::Relaxed), false)
                 .await;
         }
     }
@@ -1254,11 +1277,7 @@ impl Entity {
         }
         let amplitude = rand::random::<f64>() * 0.2 + 0.1;
         let axis = direction.to_axis().into();
-        let sign = if direction.positive() {
-            1.0
-        } else {
-            -1.0
-        };
+        let sign = if direction.positive() { 1.0 } else { -1.0 };
 
         let mut velo = self.velocity.load();
         velo = velo * 0.75;

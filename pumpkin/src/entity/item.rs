@@ -76,11 +76,15 @@ impl EntityBase for ItemEntity {
         if self.entity.touching_water.load(Relaxed) && self.entity.water_height.load() > 0.1 {
             velo.x *= 0.99;
             velo.z *= 0.99;
-            if velo.y < 0.06 { velo.y += 5.0e-4; }
+            if velo.y < 0.06 {
+                velo.y += 5.0e-4;
+            }
         } else if self.entity.touching_lava.load(Relaxed) && self.entity.lava_height.load() > 0.1 {
             velo.x *= 0.95;
             velo.z *= 0.95;
-            if velo.y < 0.06 { velo.y += 5.0e-4; }
+            if velo.y < 0.06 {
+                velo.y += 5.0e-4;
+            }
         } else {
             velo.y -= self.get_gravity();
         }
@@ -89,16 +93,27 @@ impl EntityBase for ItemEntity {
         let pos = self.entity.pos.load();
         let bounding_box = self.entity.bounding_box.load();
 
-        let no_clip = self.entity.world.read().await.is_space_empty(
-            bounding_box.expand(-1.0e-7, -1.0e-7, -1.0e-7)
-        ).await;
+        let no_clip = self
+            .entity
+            .world
+            .read()
+            .await
+            .is_space_empty(bounding_box.expand(-1.0e-7, -1.0e-7, -1.0e-7))
+            .await;
         self.entity.no_clip.store(no_clip, Relaxed);
         if no_clip {
-            self.entity.push_out_of_blocks(Vector3::new(pos.x, f64::midpoint(bounding_box.min.y, bounding_box.max.y), pos.z)).await;
+            self.entity
+                .push_out_of_blocks(Vector3::new(
+                    pos.x,
+                    f64::midpoint(bounding_box.min.y, bounding_box.max.y),
+                    pos.z,
+                ))
+                .await;
         }
 
         let mut velo = self.entity.velocity.load(); // In case push_out_of_blocks modifies it
-        let mut tick_move = !self.entity.on_ground.load(Relaxed) || velo.horizontal_length_squared() > 1.0e-5;
+        let mut tick_move =
+            !self.entity.on_ground.load(Relaxed) || velo.horizontal_length_squared() > 1.0e-5;
         if !tick_move {
             let Ok(item_age) = i32::try_from(self.item_age.load(Relaxed)) else {
                 self.entity.remove().await;

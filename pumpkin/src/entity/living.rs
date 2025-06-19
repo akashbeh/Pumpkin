@@ -9,11 +9,12 @@ use async_trait::async_trait;
 use crossbeam::atomic::AtomicCell;
 use pumpkin_config::advanced_config;
 use pumpkin_data::entity::{EffectType, EntityStatus};
-use pumpkin_data::{block_properties::{
-    BlockProperties,
-    LadderLikeProperties,
-    OakTrapdoorLikeProperties,
-}, damage::DamageType, sound::Sound, entity::EntityType};
+use pumpkin_data::{
+    block_properties::{BlockProperties, LadderLikeProperties, OakTrapdoorLikeProperties},
+    damage::DamageType,
+    entity::EntityType,
+    sound::Sound,
+};
 use pumpkin_inventory::entity_equipment::EntityEquipment;
 use pumpkin_inventory::equipment_slot::EquipmentSlot;
 use pumpkin_nbt::tag::NbtTag;
@@ -351,7 +352,9 @@ impl LivingEntity {
                 let mut velo = self.entity.velocity.load();
                 velo.y += 0.04;
                 self.entity.velocity.store(velo);
-            } else if (on_ground || in_water && fluid_height <= swim_height) && self.jumping_cooldown.load(Relaxed) == 0 {
+            } else if (on_ground || in_water && fluid_height <= swim_height)
+                && self.jumping_cooldown.load(Relaxed) == 0
+            {
                 self.jump().await;
                 self.jumping_cooldown.store(10, Relaxed);
             }
@@ -359,17 +362,19 @@ impl LivingEntity {
             self.jumping_cooldown.store(0, Relaxed);
         }
 
-        if self.has_effect(EffectType::SlowFalling).await || self.has_effect(EffectType::Levitation).await {
+        if self.has_effect(EffectType::SlowFalling).await
+            || self.has_effect(EffectType::Levitation).await
+        {
             self.fall_distance.store(0.0);
         }
 
         let touching_water = self.entity.touching_water.load(Relaxed);
         // Strider is the only entity that has canWalkOnFluid = false
-        if (touching_water || self.entity.touching_lava.load(Relaxed)) && should_swim_in_fluids && self.entity.entity_type != EntityType::STRIDER {
-            self.travel_in_fluid(
-                caller.clone(),
-                touching_water
-            ).await;
+        if (touching_water || self.entity.touching_lava.load(Relaxed))
+            && should_swim_in_fluids
+            && self.entity.entity_type != EntityType::STRIDER
+        {
+            self.travel_in_fluid(caller.clone(), touching_water).await;
         } else {
             // TODO: Gliding
             self.travel_in_air(caller.clone()).await;
@@ -385,8 +390,15 @@ impl LivingEntity {
         // applyMovementInput
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
-            let slipperiness = f64::from(self.entity.get_block_with_y_offset(0.500_001).await.1.slipperiness);
-            let speed = self.movement_speed.load() * 0.216 / (slipperiness * slipperiness * slipperiness);
+            let slipperiness = f64::from(
+                self.entity
+                    .get_block_with_y_offset(0.500_001)
+                    .await
+                    .1
+                    .slipperiness,
+            );
+            let speed =
+                self.movement_speed.load() * 0.216 / (slipperiness * slipperiness * slipperiness);
             (speed, slipperiness * 0.91)
         } else {
             let speed = if let Some(player) = caller.get_player() {
@@ -397,14 +409,17 @@ impl LivingEntity {
             };
             (speed, 0.91)
         };
-        self.entity.update_velocity_from_input(self.movement_input.load(), speed);
+        self.entity
+            .update_velocity_from_input(self.movement_input.load(), speed);
         self.apply_climbing_speed().await;
 
         self.make_move(caller.clone()).await;
 
         let mut velo = self.entity.velocity.load();
         // TODO: Add powdered snow
-        if (self.entity.horizontal_collision.load(Relaxed) || self.jumping.load(Relaxed)) && (self.climbing.load(Relaxed)) {
+        if (self.entity.horizontal_collision.load(Relaxed) || self.jumping.load(Relaxed))
+            && (self.climbing.load(Relaxed))
+        {
             velo.y = 0.2;
         }
         let levitation = self.get_effect(EffectType::Levitation).await;
@@ -419,7 +434,11 @@ impl LivingEntity {
 
         velo.x *= friction;
         velo.z *= friction;
-        velo.y *= if caller.is_flutterer() { friction } else { 0.98 };
+        velo.y *= if caller.is_flutterer() {
+            friction
+        } else {
+            0.98
+        };
         self.entity.velocity.store(velo);
     }
 
@@ -447,7 +466,8 @@ impl LivingEntity {
                 friction = 0.96;
             }
 
-            self.entity.update_velocity_from_input(movement_input, speed);
+            self.entity
+                .update_velocity_from_input(movement_input, speed);
             self.make_move(caller).await;
 
             let mut velo = self.entity.velocity.load();
@@ -457,7 +477,6 @@ impl LivingEntity {
             velo = velo.multiply(friction, 0.8, friction);
             self.apply_fluid_moving_speed(&mut velo.y, gravity, falling);
             self.entity.velocity.store(velo);
-
         } else {
             self.entity.update_velocity_from_input(movement_input, 0.02);
             self.make_move(caller).await;
@@ -478,13 +497,14 @@ impl LivingEntity {
         }
         let mut velo = self.entity.velocity.load();
         velo.y += 0.6 - self.entity.pos.load().y + y0;
-        if self.entity.horizontal_collision.load(Relaxed) && !self
-            .entity
-            .world
-            .read()
-            .await
-            .check_fluid_collision(self.entity.bounding_box.load().shift(velo))
-            .await
+        if self.entity.horizontal_collision.load(Relaxed)
+            && !self
+                .entity
+                .world
+                .read()
+                .await
+                .check_fluid_collision(self.entity.bounding_box.load().shift(velo))
+                .await
         {
             velo.y = 0.3;
             self.entity.velocity.store(velo);
@@ -502,10 +522,9 @@ impl LivingEntity {
     }
 
     async fn make_move(&self, caller: Arc<dyn EntityBase>) {
-        self.entity.move_entity(
-            caller,
-            self.entity.velocity.load()
-        ).await;
+        self.entity
+            .move_entity(caller, self.entity.velocity.load())
+            .await;
 
         self.check_climbing().await;
     }
@@ -532,9 +551,9 @@ impl LivingEntity {
                 let trapdoor = OakTrapdoorLikeProperties::from_state_id(state.id, &block);
                 pos.0.y -= 1;
                 let (down_block, down_state) = world.get_block_and_block_state(&pos).await;
-                let is_ladder = down_block.properties(down_state.id).is_some_and(|down_props|
-                    down_props.name() == "LadderLikeProperties"
-                );
+                let is_ladder = down_block
+                    .properties(down_state.id)
+                    .is_some_and(|down_props| down_props.name() == "LadderLikeProperties");
                 if is_ladder {
                     let ladder = LadderLikeProperties::from_state_id(down_state.id, &down_block);
                     if trapdoor.r#facing == ladder.r#facing {
@@ -570,8 +589,12 @@ impl LivingEntity {
             }
             velo.y = velo.y.max(neg);
 
-            if velo.y < 0.0 && self.entity.entity_type == EntityType::PLAYER && self.entity.sneaking.load(Relaxed) {
-                let block = self.entity
+            if velo.y < 0.0
+                && self.entity.entity_type == EntityType::PLAYER
+                && self.entity.sneaking.load(Relaxed)
+            {
+                let block = self
+                    .entity
                     .world
                     .read()
                     .await

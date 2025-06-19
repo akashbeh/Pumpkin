@@ -1,5 +1,5 @@
 use crate::block_properties::{Axis, Facing, HorizontalFacing};
-use pumpkin_util::math::vector3::{Vector3, Axis as MathAxis};
+use pumpkin_util::math::vector3::{Axis as MathAxis, Vector3};
 
 impl From<MathAxis> for Axis {
     fn from(a: MathAxis) -> Self {

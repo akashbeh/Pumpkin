@@ -25,7 +25,8 @@ impl Explosion {
                         continue;
                     }
 
-                    let mut lv = (Vector3::new(x, y, z).to_f64() * (2.0 / 15.0)).sub(&Vector3::new(1.0, 1.0, 1.0));
+                    let mut lv =
+                        (Vector3::new(x, y, z).to_f64() * (2.0 / 15.0)).sub_raw(1.0, 1.0, 1.0);
                     lv = lv.normalize();
 
                     let mut pos = self.pos;

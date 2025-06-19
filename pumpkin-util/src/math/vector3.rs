@@ -15,7 +15,7 @@ impl Axis {
     pub fn all() -> [Self; 3] {
         [Self::Y, Self::X, Self::Z]
     }
-    
+
     pub fn horizontal() -> [Self; 2] {
         [Self::X, Self::Z]
     }
@@ -87,6 +87,14 @@ impl<T: Math + PartialOrd + Copy> Vector3<T> {
             x: self.x - other.x,
             y: self.y - other.y,
             z: self.z - other.z,
+        }
+    }
+
+    pub fn sub_raw(&self, x: T, y: T, z: T) -> Self {
+        Vector3 {
+            x: self.x - x,
+            y: self.y - y,
+            z: self.z - z,
         }
     }
 

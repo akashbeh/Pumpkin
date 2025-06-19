@@ -421,10 +421,7 @@ pub(crate) fn build() -> TokenStream {
                 unique_states.push(state.clone());
             }
             // Create a reference to the state
-            let state_idx = unique_states
-                .iter()
-                .position(eq_state)
-                .unwrap() as u16;
+            let state_idx = unique_states.iter().position(eq_state).unwrap() as u16;
             optimized_fluids.push((
                 fluid.name.clone(),
                 FluidStateRef {

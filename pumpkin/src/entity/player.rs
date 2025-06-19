@@ -591,11 +591,7 @@ impl Player {
             .send_content_updates()
             .await;
 
-        if self
-            .client
-            .closed
-            .load(Ordering::Relaxed)
-        {
+        if self.client.closed.load(Ordering::Relaxed) {
             return;
         }
 
@@ -663,7 +659,9 @@ impl Player {
         self.last_attacked_ticks.fetch_add(1, Relaxed);
 
         let is_spectator = self.gamemode.load() == GameMode::Spectator;
-        self.get_entity().no_clip.store(is_spectator, Ordering::Relaxed);
+        self.get_entity()
+            .no_clip
+            .store(is_spectator, Ordering::Relaxed);
         if is_spectator || self.get_entity().has_vehicle() {
             self.get_entity().on_ground.store(false, Ordering::Relaxed);
         }
@@ -1720,18 +1718,10 @@ impl Player {
                 abilities.flying.then_some(f64::from(abilities.fly_speed))
             };
             if let Some(flying) = fly_speed {
-                return if sprinting {
-                    flying * 2.0
-                } else {
-                    flying
-                };
+                return if sprinting { flying * 2.0 } else { flying };
             }
         }
-        if sprinting {
-            0.025_999_999
-        } else {
-            0.02
-        }
+        if sprinting { 0.025_999_999 } else { 0.02 }
     }
 
     pub async fn is_flying(&self) -> bool {
