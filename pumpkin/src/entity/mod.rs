@@ -197,7 +197,7 @@ pub struct Entity {
     pub portal_cooldown: AtomicU32,
 
     pub portal_manager: Mutex<Option<Mutex<PortalManager>>>,
-    /// If no_clip is true, the entity cannot collide with anything (e.g. spectator)
+    /// If true, the entity cannot collide with anything (e.g. spectator)
     pub no_clip: AtomicBool,
     /// Multiplies movement for one tick before being reset
     pub movement_multiplier: AtomicCell<Vector3<f64>>,
@@ -775,6 +775,7 @@ impl Entity {
             .await;
     }
 
+    #[allow(clippy::float_cmp)]
     async fn adjust_movement_for_collisions(&self, movement: Vector3<f64>) -> Vector3<f64> {
         self.on_ground.store(false, Ordering::Relaxed);
         self.supporting_block_pos.store(None);
@@ -858,7 +859,7 @@ impl Entity {
     }
 
     /// Applies knockback to the entity, following vanilla Minecraft's mechanics.
-    /// LivingEntity.takeKnockback()
+    /// `LivingEntity.takeKnockback()`
     /// This function calculates the entity's new velocity based on the specified knockback strength and direction.
     pub fn apply_knockback(&self, strength: f64, mut x: f64, mut z: f64) {
         // TODO: strength *= 1 - Entity attribute knockback resistance
@@ -999,11 +1000,7 @@ impl Entity {
 
                         let marginal_height = f64::from(state.height) + f64::from(y) - bounding_box.min.y;
                         if marginal_height >= 0.0 {
-                            let i = if fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id {
-                                1
-                            } else {
-                                0
-                            };
+                            let i = usize::from(fluid.id == Fluid::FLOWING_LAVA.id || fluid.id == Fluid::LAVA.id);
 
                             fluid_height[i] = fluid_height[i].max(marginal_height);
                             in_fluid[i] = true;
@@ -1017,7 +1014,7 @@ impl Entity {
                             if fluid_height[i] < 0.4 {
                                 fluid_velo = fluid_velo * fluid_height[i];
                             }
-                            fluid_push[i] = fluid_push[i] + fluid_velo;
+                            fluid_push[i] += fluid_velo;
                             fluid_n[i] += 1;
 
                             fluids.insert(fluid.id, fluid);
@@ -1038,7 +1035,7 @@ impl Entity {
         let lava_speed = if self.world.read().await.dimension_type == pumpkin_registry::DimensionType::TheNether {
             0.007
         } else {
-            0.002333333
+            0.002_333_333
         };
         self.push_by_fluid(0.014, fluid_push[0], fluid_n[0]);
         self.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
@@ -1073,7 +1070,7 @@ impl Entity {
     fn push_by_fluid(&self, speed: f64, mut push: Vector3<f64>, n: usize) {
         if push.length_squared() != 0.0 {
             if n > 0 {
-                push = push * (1.0 / n as f64);
+                push = push * (1.0 / (n as f64));
             }
             if self.entity_type != EntityType::PLAYER {
                 push = push.normalize();
@@ -1081,7 +1078,7 @@ impl Entity {
             push = push * speed;
 
             let velo = self.velocity.load();
-            if velo.x.abs() < 0.003 && velo.z.abs() < 0.003 && velo.length_squared() < 0.00002025 {
+            if velo.x.abs() < 0.003 && velo.z.abs() < 0.003 && velo.length_squared() < 0.000_020_25 {
                 push = push.normalize() * 0.0045;
             }
             self.velocity.store(velo + push);
@@ -1138,7 +1135,7 @@ impl Entity {
 
     // Entity.movementInputToVelocity in yarn
     fn movement_input_to_velocity(&self, movement_input: Vector3<f64>, speed: f64) -> Vector3<f64> {
-        let yaw = self.yaw.load();
+        let yaw = f64::from(self.yaw.load()).to_radians();
         let dist = movement_input.length_squared();
         if dist < 1.0e-7 {
             return Vector3::default();
@@ -1148,33 +1145,35 @@ impl Entity {
         } else {
             movement_input * speed
         };
-        let h = (yaw * std::f32::consts::PI / 180.0).sin();
-        let i = (yaw * std::f32::consts::PI / 180.0).cos();
+        let h = yaw.sin();
+        let i = yaw.cos();
 
         Vector3::new(
-            lv.x * i as f64 - lv.z * h as f64,
+            lv.x * i - lv.z * h,
             lv.y,
-            lv.z * i as f64 + lv.x * h as f64,
+            lv.z * i + lv.x * h,
         )
     }
 
+    #[allow(clippy::float_cmp)]
     async fn get_velocity_multiplier(&self) -> f32 {
         let world = self.world.read().await;
         let block = world.get_block(&self.block_pos.load()).await;
         let m1 = block.velocity_multiplier;
-        if block == Block::WATER || block == Block::BUBBLE_COLUMN || m1 != 1.0 {
+        if m1 != 1f32 || block == Block::WATER || block == Block::BUBBLE_COLUMN {
             m1
         } else {
-            let (_pos, block, _state) = self.get_block_with_y_offset(0.500001).await;
+            let (_pos, block, _state) = self.get_block_with_y_offset(0.500_001).await;
             block.velocity_multiplier
         }
     }
 
+    #[allow(clippy::float_cmp)]
     async fn get_jump_velocity_multiplier(&self) -> f32 {
         let world = self.world.read().await;
         let f = world.get_block(&self.block_pos.load()).await.jump_velocity_multiplier;
-        let g = self.get_block_with_y_offset(0.500001).await.1.jump_velocity_multiplier;
-        if f == 1.0 {
+        let g = self.get_block_with_y_offset(0.500_001).await.1.jump_velocity_multiplier;
+        if f == 1f32 {
             g
         } else {
             f

@@ -324,11 +324,7 @@ impl LivingEntity {
             self.jumping_cooldown.fetch_sub(1, Relaxed);
         }
         let should_swim_in_fluids = if let Some(player) = caller.get_player() {
-            if player.is_flying().await {
-                false
-            } else {
-                true
-            }
+            !player.is_flying().await
         } else {
             true
         };
@@ -376,7 +372,7 @@ impl LivingEntity {
             ).await;
         } else {
             // TODO: Gliding
-            self.travel_in_air(caller.clone()).await
+            self.travel_in_air(caller.clone()).await;
         }
         self.entity.tick_block_underneath(&caller).await;
         let suffocating = self.entity.tick_block_collisions(&caller, server).await;
@@ -389,7 +385,7 @@ impl LivingEntity {
         // applyMovementInput
         let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
             // getVelocityAffectingPos
-            let slipperiness = self.entity.get_block_with_y_offset(0.500001).await.1.slipperiness as f64;
+            let slipperiness = f64::from(self.entity.get_block_with_y_offset(0.500_001).await.1.slipperiness);
             let speed = self.movement_speed.load() * 0.216 / (slipperiness * slipperiness * slipperiness);
             (speed, slipperiness * 0.91)
         } else {
@@ -413,7 +409,7 @@ impl LivingEntity {
         }
         let levitation = self.get_effect(EffectType::Levitation).await;
         if let Some(lev) = levitation {
-            velo.y += (0.05 * (lev.amplifier + 1) as f64 - velo.y) * 0.2;
+            velo.y += (0.05 * f64::from(lev.amplifier + 1) - velo.y) * 0.2;
         } else {
             velo.y -= self.get_effective_gravity(&caller).await;
             // TODO: If world is not loaded: replace effective gravity with:
@@ -436,7 +432,7 @@ impl LivingEntity {
             let mut friction = if self.entity.sprinting.load(Relaxed) {
                 0.9
             } else {
-                self.water_movement_speed_multiplier as f64
+                f64::from(self.water_movement_speed_multiplier)
             };
             let mut speed = 0.02;
             let mut water_movement_efficiency = 0.0; // TODO: Entity attribute
@@ -444,7 +440,7 @@ impl LivingEntity {
                 if !self.entity.on_ground.load(Relaxed) {
                     water_movement_efficiency *= 0.5;
                 }
-                friction += (0.54600006 - friction) * water_movement_efficiency;
+                friction += (0.546_000_06 - friction) * water_movement_efficiency;
                 speed += (self.movement_speed.load() - speed) * water_movement_efficiency;
             }
             if self.has_effect(EffectType::DolphinsGrace).await {
@@ -536,9 +532,9 @@ impl LivingEntity {
                 let trapdoor = OakTrapdoorLikeProperties::from_state_id(state.id, &block);
                 pos.0.y -= 1;
                 let (down_block, down_state) = world.get_block_and_block_state(&pos).await;
-                let is_ladder = down_block.properties(down_state.id).map(|down_props|
+                let is_ladder = down_block.properties(down_state.id).is_some_and(|down_props|
                     down_props.name() == "LadderLikeProperties"
-                ).unwrap_or(false);
+                );
                 if is_ladder {
                     let ladder = LadderLikeProperties::from_state_id(down_state.id, &down_block);
                     if trapdoor.r#facing == ladder.r#facing {
@@ -583,7 +579,7 @@ impl LivingEntity {
                     .await;
                 if let Some(props) = block.properties(block.default_state_id) {
                     if props.name() == "ScaffoldingLikeProperties" {
-                        velo.y = 0.0
+                        velo.y = 0.0;
                     }
                 }
             }
@@ -595,13 +591,11 @@ impl LivingEntity {
     pub fn get_swim_height(&self) -> f64 {
         let eye_height = self.entity.standing_eye_height;
         if self.entity.entity_type == EntityType::BREEZE {
-            eye_height as f64
+            f64::from(eye_height)
+        } else if eye_height < 0.4 {
+            0.0
         } else {
-            if eye_height < 0.4 {
-                0.0
-            } else {
-                0.4
-            }
+            0.4
         }
     }
 
@@ -613,18 +607,18 @@ impl LivingEntity {
         let mut velo = self.entity.velocity.load();
         velo.y = jump.max(velo.y);
         if self.entity.sprinting.load(Relaxed) {
-            let yaw = self.entity.yaw.load() * std::f32::consts::PI / 180.0;
-            velo.x += -yaw.sin() as f64 * 0.2;
-            velo.y += yaw.cos() as f64 * 0.2;
+            let yaw = f64::from(self.entity.yaw.load()).to_radians();
+            velo.x -= yaw.sin() * 0.2;
+            velo.y += yaw.cos() * 0.2;
         }
         self.entity.velocity.store(velo);
     }
 
     async fn get_jump_velocity(&self, mut strength: f64) -> f64 {
         strength *= 1.0; // TODO: Entity Attribute jump strength
-        strength *= self.entity.get_jump_velocity_multiplier().await as f64;
+        strength *= f64::from(self.entity.get_jump_velocity_multiplier().await);
         if let Some(effect) = self.get_effect(EffectType::JumpBoost).await {
-            strength += 0.1 * (effect.amplifier + 1) as f64;
+            strength += 0.1 * f64::from(effect.amplifier + 1);
         }
         strength
     }

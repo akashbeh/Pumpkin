@@ -191,10 +191,7 @@ impl BlockDirection {
         }
     }
     pub fn positive(&self) -> bool {
-        match self {
-            Self::South | Self::East | Self::Up => true,
-            _ => false,
-        }
+        matches!(self, Self::South | Self::East | Self::Up)
     }
 
     pub fn to_facing(&self) -> Facing {

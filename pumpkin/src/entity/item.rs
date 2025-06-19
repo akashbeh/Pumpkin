@@ -94,7 +94,7 @@ impl EntityBase for ItemEntity {
         ).await;
         self.entity.no_clip.store(no_clip, Relaxed);
         if no_clip {
-            self.entity.push_out_of_blocks(Vector3::new(pos.x, (bounding_box.min.y + bounding_box.max.y) / 2.0, pos.z)).await;
+            self.entity.push_out_of_blocks(Vector3::new(pos.x, f64::midpoint(bounding_box.min.y, bounding_box.max.y), pos.z)).await;
         }
 
         let mut velo = self.entity.velocity.load(); // In case push_out_of_blocks modifies it
@@ -113,7 +113,7 @@ impl EntityBase for ItemEntity {
 
             let mut friction = 0.98;
             if self.entity.on_ground.load(Relaxed) {
-                let block_affecting_velo = self.entity.get_block_with_y_offset(0.999999).await.1;
+                let block_affecting_velo = self.entity.get_block_with_y_offset(0.999_999).await.1;
                 friction *= f64::from(block_affecting_velo.slipperiness);
             }
             velo = velo.multiply(friction, 0.98, friction);

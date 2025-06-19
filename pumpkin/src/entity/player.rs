@@ -1717,7 +1717,7 @@ impl Player {
         if !self.get_entity().has_vehicle() {
             let fly_speed = {
                 let abilities = self.abilities.lock().await;
-                abilities.flying.then_some(abilities.fly_speed as f64)
+                abilities.flying.then_some(f64::from(abilities.fly_speed))
             };
             if let Some(flying) = fly_speed {
                 return if sprinting {
@@ -1728,7 +1728,7 @@ impl Player {
             }
         }
         if sprinting {
-            0.025999999
+            0.025_999_999
         } else {
             0.02
         }
@@ -1880,7 +1880,7 @@ impl EntityBase for Player {
     }
 
     fn get_player(&self) -> Option<&Player> {
-        Some(&self)
+        Some(self)
     }
 
     async fn is_pushed_by_fluids(&self) -> bool {

@@ -48,7 +48,7 @@ impl Explosion {
                         if h > 0.0 {
                             set.insert(block_pos);
                         }
-                        pos = pos + lv * 0.3;
+                        pos += lv * 0.3;
                         h -= 0.225_000_01f32;
                     }
                 }

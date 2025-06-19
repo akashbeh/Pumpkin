@@ -1625,7 +1625,7 @@ impl World {
             if let Some(block) = get_block_by_state_id(id) {
                 if let Some(properties) = block.properties(id) {
                     for (name, value) in properties.to_props() {
-                        if name == "waterlogged".to_string() && value == true.to_string() {
+                        if name == *"waterlogged" && value == true.to_string() {
                             let fluid = Fluid::FLOWING_WATER;
                             let state = fluid.default_state().clone();
                             return (fluid, state);
@@ -1967,7 +1967,7 @@ impl World {
                     let down_pos = pos.down();
                     let (down_fluid, down_state) = self.get_fluid_and_fluid_state(&down_pos).await;
                     if down_fluid.id == fluid0.id {
-                        amplitude = f64::from(state0.height - down_state.height) + 0.8888889;
+                        amplitude = f64::from(state0.height - down_state.height) + 0.888_888_9;
                     }
                 }
             } else {
@@ -2000,10 +2000,10 @@ impl World {
                 }
             }
         }
-        if velo.length_squared() != 0.0 {
-            velo.normalize()
-        } else {
+        if velo.length_squared() == 0.0 {
             velo
+        } else {
+            velo.normalize()
         }
     }
 
