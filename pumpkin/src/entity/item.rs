@@ -134,7 +134,6 @@ impl EntityBase for ItemEntity {
 
         self.entity.send_pos_rot().await;
         self.entity.send_velocity().await;
-        self.entity.debug_loc().await;
     }
 
     async fn init_data_tracker(&self) {
