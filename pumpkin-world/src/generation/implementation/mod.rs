@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
 use pumpkin_data::noise_router::{
     END_BASE_NOISE_ROUTER, NETHER_BASE_NOISE_ROUTER, OVERWORLD_BASE_NOISE_ROUTER,
 };
@@ -7,18 +10,31 @@ use super::{
     biome_coords, noise_router::proto_noise_router::ProtoNoiseRouters,
     settings::gen_settings_from_dimension,
 };
-use crate::chunk::ChunkHeightmaps;
 use crate::chunk::format::LightContainer;
+use crate::level::Level;
+use crate::world::BlockRegistryExt;
 use crate::{chunk::ChunkLight, dimension::Dimension};
 use crate::{
     chunk::{
         ChunkData, ChunkSections, SubChunk,
         palette::{BiomePalette, BlockPalette},
     },
-    generation::{
-        GlobalRandomConfig, Seed, WorldGenerator, generator::GeneratorInit, proto_chunk::ProtoChunk,
-    },
+    generation::{GlobalRandomConfig, Seed, proto_chunk::ProtoChunk},
 };
+
+pub trait GeneratorInit {
+    fn new(seed: Seed, dimension: Dimension) -> Self;
+}
+
+#[async_trait]
+pub trait WorldGenerator: Sync + Send {
+    async fn generate_chunk(
+        &self,
+        level: &Arc<Level>,
+        block_registry: &dyn BlockRegistryExt,
+        at: &Vector2<i32>,
+    ) -> ChunkData;
+}
 
 pub struct VanillaGenerator {
     random_config: GlobalRandomConfig,
@@ -45,11 +61,21 @@ impl GeneratorInit for VanillaGenerator {
     }
 }
 
+#[async_trait]
 impl WorldGenerator for VanillaGenerator {
-    fn generate_chunk(&self, at: &Vector2<i32>) -> ChunkData {
+    async fn generate_chunk(
+        &self,
+        level: &Arc<Level>,
+        block_registry: &dyn BlockRegistryExt,
+        at: &Vector2<i32>,
+    ) -> ChunkData {
         let generation_settings = gen_settings_from_dimension(&self.dimension);
 
-        let sub_chunks = generation_settings.shape.height as usize / BlockPalette::SIZE;
+        let height: usize = match self.dimension {
+            Dimension::Overworld => 384,
+            Dimension::Nether | Dimension::End => 256,
+        };
+        let sub_chunks = height / BlockPalette::SIZE;
         let sections = (0..sub_chunks).map(|_| SubChunk::default()).collect();
         let mut sections = ChunkSections::new(sections, generation_settings.shape.min_y as i32);
 
@@ -62,6 +88,7 @@ impl WorldGenerator for VanillaGenerator {
         proto_chunk.populate_biomes(self.dimension);
         proto_chunk.populate_noise();
         proto_chunk.build_surface();
+        proto_chunk.generate_features(level, block_registry).await;
 
         for y in 0..biome_coords::from_block(generation_settings.shape.height) {
             for z in 0..BiomePalette::SIZE {
@@ -85,11 +112,6 @@ impl WorldGenerator for VanillaGenerator {
                 }
             }
         }
-        let heightmap = ChunkHeightmaps {
-            world_surface: proto_chunk.flat_surface_height_map,
-            motion_blocking: proto_chunk.flat_motion_blocking_height_map,
-            motion_blocking_no_leaves: proto_chunk.flat_motion_blocking_no_leaves_height_map,
-        };
         ChunkData {
             light_engine: ChunkLight {
                 sky_light: (0..sections.sections.len() + 2)
@@ -100,7 +122,7 @@ impl WorldGenerator for VanillaGenerator {
                     .collect(),
             },
             section: sections,
-            heightmap,
+            heightmap: Default::default(),
             position: *at,
             dirty: true,
             block_ticks: Default::default(),

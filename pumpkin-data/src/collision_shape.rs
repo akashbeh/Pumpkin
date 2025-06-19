@@ -13,6 +13,18 @@ impl CollisionShape {
 
     pub fn at_pos(self, pos: BlockPos) -> BoundingBox {
         self.to_box().shift(pos.0.to_f64())
+
+    pub fn new(min: Vector3<f64>, max: Vector3<f64>) -> Self {
+        Self { min, max }
+    }
+
+    pub fn intersects(&self, other: &BoundingBox) -> bool {
+        self.min.x < other.max.x
+            && self.max.x > other.min.x
+            && self.min.y < other.max.y
+            && self.max.y > other.min.y
+            && self.min.z < other.max.z
+            && self.max.z > other.min.z
     }
 
     fn to_box(self) -> BoundingBox {

@@ -3,7 +3,10 @@ use proc_macro2::{Span, TokenStream};
 use pumpkin_util::math::{experience::Experience, vector3::Vector3};
 use quote::{ToTokens, format_ident, quote};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+};
 use syn::{Ident, LitInt, LitStr};
 
 fn const_block_name_from_block_name(block: &str) -> String {
@@ -275,15 +278,20 @@ impl ToTokens for BlockPropertyStruct {
                     }
                 }
 
+                #[inline]
+                fn handles_block_id(block_id: u16) -> bool where Self: Sized {
+                    [#(#block_ids),*].contains(&block_id)
+                }
+
                 fn to_state_id(&self, block: &Block) -> u16 {
-                    if ![#(#block_ids),*].contains(&block.id) {
+                    if !Self::handles_block_id(block.id) {
                         panic!("{} is not a valid block for {}", &block.name, #struct_name);
                     }
                     block.states[0].id + self.to_index()
                 }
 
                 fn from_state_id(state_id: u16, block: &Block) -> Self {
-                    if ![#(#block_ids),*].contains(&block.id) {
+                    if !Self::handles_block_id(block.id) {
                         panic!("{} is not a valid block for {}", &block.name, #struct_name);
                     }
                     if state_id >= block.states[0].id && state_id <= block.states.last().unwrap().id {
@@ -295,7 +303,7 @@ impl ToTokens for BlockPropertyStruct {
                 }
 
                 fn default(block: &Block) -> Self {
-                    if ![#(#block_ids),*].contains(&block.id) {
+                    if !Self::handles_block_id(block.id) {
                         panic!("{} is not a valid block for {}", &block.name, #struct_name);
                     }
                     Self::from_state_id(block.default_state_id, block)
@@ -307,7 +315,6 @@ impl ToTokens for BlockPropertyStruct {
                     #(#to_props_values)*
                     props
                 }
-
                 fn from_props(props: Vec<(&str, &str)>, block: &Block) -> Self {
                     if ![#(#block_ids),*].contains(&block.id) {
                         panic!("{} is not a valid block for {}", &block.name, #struct_name);
@@ -365,6 +372,7 @@ pub struct BlockState {
     pub piston_behavior: PistonBehavior,
     pub hardness: f32,
     pub collision_shapes: Vec<u16>,
+    pub outline_shapes: Vec<u16>,
     pub opacity: Option<u8>,
     pub block_entity_type: Option<u16>,
 }
@@ -403,7 +411,7 @@ impl BlockState {
         let id = LitInt::new(&self.id.to_string(), Span::call_site());
         let state_flags = LitInt::new(&self.state_flags.to_string(), Span::call_site());
         let side_flags = LitInt::new(&self.side_flags.to_string(), Span::call_site());
-        let instrument = self.instrument.clone();
+        let instrument = format_ident!("{}", self.instrument.to_upper_camel_case());
         let luminance = LitInt::new(&self.luminance.to_string(), Span::call_site());
         let hardness = self.hardness;
         let opacity = match self.opacity {
@@ -426,6 +434,10 @@ impl BlockState {
             .collision_shapes
             .iter()
             .map(|shape_id| LitInt::new(&shape_id.to_string(), Span::call_site()));
+        let outline_shapes = self
+            .outline_shapes
+            .iter()
+            .map(|shape_id| LitInt::new(&shape_id.to_string(), Span::call_site()));
         let piston_behavior = &self.piston_behavior.to_tokens();
 
         tokens.extend(quote! {
@@ -433,11 +445,12 @@ impl BlockState {
                 id: #id,
                 state_flags: #state_flags,
                 side_flags: #side_flags,
-                instrument: #instrument,
+                instrument: Instrument::#instrument,
                 luminance: #luminance,
                 piston_behavior: #piston_behavior,
                 hardness: #hardness,
                 collision_shapes: &[#(#collision_shapes),*],
+                outline_shapes: &[#(#outline_shapes),*],
                 opacity: #opacity,
                 block_entity_type: #block_entity_type,
             }
@@ -1093,11 +1106,12 @@ pub(crate) fn build() -> TokenStream {
     println!("cargo:rerun-if-changed=../assets/blocks.json");
     println!("cargo:rerun-if-changed=../assets/properties.json");
 
-    let blocks_assets: BlockAssets = serde_json::from_str(include_str!("../../assets/blocks.json"))
-        .expect("Failed to parse blocks.json");
+    let blocks_assets: BlockAssets =
+        serde_json::from_str(&fs::read_to_string("../assets/blocks.json").unwrap())
+            .expect("Failed to parse blocks.json");
 
     let generated_properties: Vec<GeneratedProperty> =
-        serde_json::from_str(include_str!("../../assets/properties.json"))
+        serde_json::from_str(&fs::read_to_string("../assets/properties.json").unwrap())
             .expect("Failed to parse properties.json");
 
     let mut type_from_raw_id_arms = TokenStream::new();
@@ -1320,6 +1334,9 @@ pub(crate) fn build() -> TokenStream {
             // Convert an index back to properties.
             fn from_index(index: u16) -> Self where Self: Sized;
 
+            // Check if a block uses this property
+            fn handles_block_id(block_id: u16) -> bool where Self: Sized;
+
             // Convert properties to a state id.
             fn to_state_id(&self, block: &Block) -> u16;
             // Convert a state id back to properties.
@@ -1344,8 +1361,6 @@ pub(crate) fn build() -> TokenStream {
             fn from_value(value: &str) -> Self;
         }
 
-
-
         pub static COLLISION_SHAPES: &[CollisionShape] = &[
             #(#shapes),*
         ];
@@ -1358,7 +1373,84 @@ pub(crate) fn build() -> TokenStream {
             #(#block_entity_types),*
         ];
 
+        pub fn get_block(registry_id: &str) -> Option<Block> {
+           let key = registry_id.strip_prefix("minecraft:").unwrap_or(registry_id);
+           Block::from_registry_key(key)
+        }
 
+        pub fn get_block_by_id(id: u16) -> Option<Block> {
+            Block::from_id(id)
+        }
+
+        pub fn get_state_by_state_id(id: u16) -> Option<BlockState> {
+            if let Some(block) = Block::from_state_id(id) {
+                let state: &BlockStateRef = block.states.iter().find(|state| state.id == id)?;
+                Some(state.get_state())
+            } else {
+                None
+            }
+        }
+
+        pub fn get_block_by_state_id(id: u16) -> Option<Block> {
+            Block::from_state_id(id)
+        }
+
+        pub fn get_block_and_state_by_state_id(id: u16) -> Option<(Block, BlockState)> {
+            if let Some(block) = Block::from_state_id(id) {
+                let state: &BlockStateRef = block.states.iter().find(|state| state.id == id)?;
+                Some((block, state.get_state()))
+            } else {
+                None
+            }
+        }
+
+        pub fn get_block_by_item(item_id: u16) -> Option<Block> {
+            Block::from_item_id(item_id)
+        }
+
+        pub fn get_block_collision_shapes(state_id: u16) -> Option<Vec<CollisionShape>> {
+            let state = get_state_by_state_id(state_id)?;
+            let mut shapes: Vec<CollisionShape> = vec![];
+            for i in 0..state.collision_shapes.len() {
+               let shape = &COLLISION_SHAPES[state.collision_shapes[i] as usize];
+                shapes.push(*shape);
+            }
+            Some(shapes)
+        }
+
+        pub fn get_block_outline_shapes(state_id: u16) -> Option<Vec<CollisionShape>> {
+            let state = get_state_by_state_id(state_id)?;
+            let mut shapes: Vec<CollisionShape> = vec![];
+            for i in 0..state.outline_shapes.len() {
+                let shape = &COLLISION_SHAPES[state.outline_shapes[i] as usize];
+                shapes.push(*shape);
+            }
+            let block = get_block_by_state_id(state_id)?;
+            if block.properties(state.id).and_then(|properties| {
+                properties
+                    .to_props()
+                    .into_iter()
+                    .find(|p| p.0 == "waterlogged")
+                    .map(|(_, value)| value == true.to_string())
+            }) == Some(true)
+            {
+                // If the block is waterlogged, add a water shape
+                let shape =
+                    &CollisionShape::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.875, 1.0));
+                shapes.push(*shape);
+            }
+
+            Some(shapes)
+        }
+
+        pub fn blocks_movement(block_state: &BlockState) -> bool {
+            if block_state.is_solid() {
+                if let Some(block) = get_block_by_state_id(block_state.id) {
+                    return block != Block::COBWEB && block != Block::BAMBOO_SAPLING;
+                }
+            }
+            false
+        }
 
         impl Block {
             #constants

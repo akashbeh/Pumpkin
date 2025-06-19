@@ -7,7 +7,7 @@ use living::LivingEntity;
 use player::Player;
 use pumpkin_data::{
     Block, BlockDirection, BlockState,
-    block_properties::{BlockProperties, Facing, HorizontalFacing, OakFenceGateLikeProperties},
+    block_properties::{BlockProperties, Facing, HorizontalFacing, get_block_outline_shapes, OakFenceGateLikeProperties},
     damage::DamageType,
     entity::{EntityPose, EntityType},
     fluid::Fluid,
@@ -22,6 +22,7 @@ use pumpkin_protocol::{
     codec::var_int::VarInt,
     ser::serializer::Serializer,
 };
+use pumpkin_registry::VanillaDimensionType;
 use pumpkin_util::math::{
     boundingbox::{BoundingBox, EntityDimensions},
     get_section_cord,
@@ -455,9 +456,33 @@ impl Entity {
                 // reset cooldown
                 self.portal_cooldown
                     .store(self.default_portal_cooldown(), Ordering::Relaxed);
+                let pos = self.pos.load();
+                // TODO: this is bad
+                let scale_factor_new = if portal_manager.portal_world.dimension_type
+                    == VanillaDimensionType::TheNether
+                {
+                    8.0
+                } else {
+                    1.0
+                };
+                // TODO: this is bad
+                let scale_factor_current =
+                    if self.world.read().await.dimension_type == VanillaDimensionType::TheNether {
+                        8.0
+                    } else {
+                        1.0
+                    };
+                let scale_factor = scale_factor_current / scale_factor_new;
+                // TODO
+                let pos = BlockPos::floored(pos.x * scale_factor, pos.y, pos.z * scale_factor);
                 caller
                     .clone()
-                    .teleport(None, None, None, portal_manager.portal_world.clone())
+                    .teleport(
+                        Some(pos.0.to_f64()),
+                        None,
+                        None,
+                        portal_manager.portal_world.clone(),
+                    )
                     .await;
             } else if portal_manager.ticks_in_portal == 0 {
                 should_remove = true;
@@ -573,7 +598,7 @@ impl Entity {
     }
 
     pub fn get_horizontal_facing(&self) -> HorizontalFacing {
-        let adjusted_yaw = (self.yaw.load() % 360.0 + 360.0) % 360.0; // Normalize yaw to [0, 360)
+        let adjusted_yaw = self.yaw.load().rem_euclid(360.0); // Normalize yaw to [0, 360)
 
         match adjusted_yaw {
             0.0..=45.0 | 315.0..=360.0 => HorizontalFacing::South,
@@ -741,7 +766,6 @@ impl Entity {
         pitch: Option<f32>,
         _world: Arc<World>,
     ) {
-        dbg!("aa");
         // TODO: handle world change
         self.world
             .read()

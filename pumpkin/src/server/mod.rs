@@ -16,10 +16,14 @@ use connection_cache::{CachedBranding, CachedStatus};
 use key_store::KeyStore;
 use pumpkin_config::{BASIC_CONFIG, advanced_config};
 
+use pumpkin_inventory::screen_handler::InventoryPlayer;
 use pumpkin_macros::send_cancellable;
 use pumpkin_protocol::client::login::CEncryptionRequest;
+use pumpkin_protocol::client::play::CChangeDifficulty;
+use pumpkin_protocol::client::play::CSetSelectedSlot;
 use pumpkin_protocol::{ClientPacket, client::config::CPluginMessage};
-use pumpkin_registry::{DimensionType, Registry};
+use pumpkin_registry::{Registry, VanillaDimensionType};
+use pumpkin_util::Difficulty;
 use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::text::TextComponent;
 use pumpkin_world::dimension::Dimension;
@@ -29,7 +33,7 @@ use pumpkin_world::world_info::anvil::{
     AnvilLevelInfo, LEVEL_DAT_BACKUP_FILE_NAME, LEVEL_DAT_FILE_NAME,
 };
 use pumpkin_world::world_info::{LevelData, WorldInfoError, WorldInfoReader, WorldInfoWriter};
-use rand::prelude::SliceRandom;
+use rand::seq::IndexedRandom;
 use rsa::RsaPublicKey;
 use std::fs;
 use std::net::IpAddr;
@@ -47,7 +51,7 @@ mod key_store;
 pub mod seasonal_events;
 pub mod ticker;
 
-pub const CURRENT_MC_VERSION: &str = "1.21.5";
+pub const CURRENT_MC_VERSION: &str = "1.21.6";
 
 /// Represents a Minecraft server instance.
 pub struct Server {
@@ -66,7 +70,7 @@ pub struct Server {
     /// Manages multiple worlds within the server.
     pub worlds: RwLock<Vec<Arc<World>>>,
     /// All the dimensions that exist on the server.
-    pub dimensions: Vec<DimensionType>,
+    pub dimensions: Vec<VanillaDimensionType>,
     /// Caches game registries for efficient access.
     pub cached_registry: Vec<Registry>,
     /// Assigns unique IDs to containers.
@@ -87,7 +91,7 @@ pub struct Server {
     tasks: TaskTracker,
 
     // world stuff which maybe should be put into a struct
-    pub level_info: Arc<LevelData>,
+    pub level_info: Arc<RwLock<LevelData>>,
     world_info_writer: Arc<dyn WorldInfoWriter>,
     // Gets unlocked when dropped
     // TODO: Make this a trait
@@ -97,7 +101,7 @@ pub struct Server {
 impl Server {
     #[allow(clippy::new_without_default)]
     #[must_use]
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         let auth_client = BASIC_CONFIG.online_mode.then(|| {
             reqwest::Client::builder()
                 .connect_timeout(Duration::from_millis(u64::from(
@@ -111,7 +115,7 @@ impl Server {
         });
 
         // First register the default commands. After that, plugins can put in their own.
-        let command_dispatcher = RwLock::new(default_dispatcher());
+        let command_dispatcher = RwLock::new(default_dispatcher().await);
         let world_path = BASIC_CONFIG.get_world_path();
 
         let block_registry = super::block::default_registry();
@@ -138,45 +142,45 @@ impl Server {
             }
         }
 
-        let level_info = Arc::new(level_info.unwrap_or_default()); // TODO: Improve error handling
+        let level_info = level_info.unwrap_or_default(); // TODO: Improve error handling
         let seed = level_info.world_gen_settings.seed;
         log::info!("Loading Overworld: {seed}");
         let overworld = World::load(
-            Dimension::Overworld.into_level(world_path.clone(), seed),
+            Dimension::Overworld.into_level(world_path.clone(), block_registry.clone(), seed),
             level_info.clone(),
-            DimensionType::Overworld,
+            VanillaDimensionType::Overworld,
             block_registry.clone(),
         );
         log::info!("Loading Nether: {seed}");
         let nether = World::load(
-            Dimension::Nether.into_level(world_path.clone(), seed),
+            Dimension::Nether.into_level(world_path.clone(), block_registry.clone(), seed),
             level_info.clone(),
-            DimensionType::TheNether,
+            VanillaDimensionType::TheNether,
             block_registry.clone(),
         );
-        // log::info!("Loading End: {}", seed);
-        // let end = World::load(
-        //     Dimension::End.into_level(world_path.clone(), seed),
-        //     level_info.clone(),
-        //     DimensionType::TheEnd,
-        //     block_registry.clone(),
-        // );
+        log::info!("Loading End: {seed}");
+        let end = World::load(
+            Dimension::End.into_level(world_path.clone(), block_registry.clone(), seed),
+            level_info.clone(),
+            VanillaDimensionType::TheEnd,
+            block_registry.clone(),
+        );
 
         // if we fail to lock, lets crash ???. maybe not the best solution when we have a large server with many worlds and one is locked.
         // So TODO
-        let locker = AnvilLevelLocker::look(&world_path).expect("Failed to lock level");
+        let locker = AnvilLevelLocker::lock(&world_path).expect("Failed to lock level");
 
         let world_name = world_path.to_str().unwrap();
 
         Self {
             cached_registry: Registry::get_synced(),
             container_id: 0.into(),
-            worlds: RwLock::new(vec![Arc::new(overworld), Arc::new(nether)]),
+            worlds: RwLock::new(vec![Arc::new(overworld), Arc::new(nether), Arc::new(end)]),
             dimensions: vec![
-                DimensionType::Overworld,
-                DimensionType::OverworldCaves,
-                DimensionType::TheNether,
-                DimensionType::TheEnd,
+                VanillaDimensionType::Overworld,
+                VanillaDimensionType::OverworldCaves,
+                VanillaDimensionType::TheNether,
+                VanillaDimensionType::TheEnd,
             ],
             command_dispatcher,
             block_registry,
@@ -197,7 +201,7 @@ impl Server {
             tasks: TaskTracker::new(),
             mojang_public_keys: Mutex::new(Vec::new()),
             world_info_writer: Arc::new(AnvilLevelInfo),
-            level_info,
+            level_info: Arc::new(RwLock::new(level_info)),
             _locker: Arc::new(locker),
         }
     }
@@ -224,14 +228,14 @@ impl Server {
         self.tasks.spawn(task)
     }
 
-    pub async fn get_world_from_dimension(&self, dimension: DimensionType) -> Arc<World> {
+    pub async fn get_world_from_dimension(&self, dimension: VanillaDimensionType) -> Arc<World> {
         // TODO: this is really bad
         let world_guard = self.worlds.read().await;
         let world = match dimension {
-            DimensionType::Overworld => world_guard.first(),
-            DimensionType::OverworldCaves => todo!(),
-            DimensionType::TheEnd => todo!(),
-            DimensionType::TheNether => world_guard.get(1),
+            VanillaDimensionType::Overworld => world_guard.first(),
+            VanillaDimensionType::OverworldCaves => todo!(),
+            VanillaDimensionType::TheEnd => world_guard.get(2),
+            VanillaDimensionType::TheNether => world_guard.get(1),
         };
         world.cloned().unwrap()
     }
@@ -268,7 +272,9 @@ impl Server {
 
         let (world, nbt) = if let Ok(Some(data)) = self.player_data_storage.load_data(&uuid) {
             if let Some(dimension_key) = data.get_string("Dimension") {
-                if let Some(dimension) = DimensionType::from_name(dimension_key) {
+                if let Some(dimension) =
+                    VanillaDimensionType::from_resource_location_string(dimension_key)
+                {
                     let world = self.get_world_from_dimension(dimension).await;
                     (world, Some(data))
                 } else {
@@ -320,6 +326,10 @@ impl Server {
                         }
                     }
 
+                    player.enqueue_set_held_item_packet(&CSetSelectedSlot::new(
+                        player.get_inventory().get_selected_slot() as i8,
+                    )).await;
+
                     Some((player, world.clone()))
                 } else {
                     None
@@ -349,10 +359,10 @@ impl Server {
             world.shutdown().await;
         }
         // then lets save the world info
-        if let Err(err) = self
-            .world_info_writer
-            .write_world_info(&self.level_info, &BASIC_CONFIG.get_world_path())
-        {
+        if let Err(err) = self.world_info_writer.write_world_info(
+            &*self.level_info.read().await,
+            &BASIC_CONFIG.get_world_path(),
+        ) {
             log::error!("Failed to save level.dat: {err}");
         }
         log::info!("Completed worlds");
@@ -402,6 +412,45 @@ impl Server {
                 }
             }
         }}
+    }
+
+    /// Sets the difficulty of the server.
+    ///
+    /// This function updates the difficulty level of the server and broadcasts the change to all players.
+    /// It also iterates through all worlds to ensure the difficulty is applied consistently.
+    /// If `force_update` is `Some(true)`, the difficulty will be set regardless of the current state.
+    /// If `force_update` is `Some(false)` or `None`, the difficulty will only be updated if it is not locked.
+    ///
+    /// # Arguments
+    ///
+    /// * `difficulty`: The new difficulty level to set. This should be one of the variants of the `Difficulty` enum.
+    /// * `force_update`: An optional boolean that, if set to `Some(true)`, forces the difficulty to be updated even if it is currently locked.
+    ///
+    /// # Note
+    ///
+    /// This function does not handle the actual mob spawn options update, which is a TODO item for future implementation.
+    pub async fn set_difficulty(&self, difficulty: Difficulty, force_update: Option<bool>) {
+        let mut level_info = self.level_info.write().await;
+        if force_update.unwrap_or_default() || !level_info.difficulty_locked {
+            level_info.difficulty = if BASIC_CONFIG.hardcore {
+                Difficulty::Hard
+            } else {
+                difficulty
+            };
+            // Minecraft server updates mob spawn options here
+            // but its not implemented in Pumpkin yet
+            // todo: update mob spawn options
+
+            for world in &*self.worlds.read().await {
+                world.level_info.write().await.difficulty = level_info.difficulty;
+            }
+
+            self.broadcast_packet_all(&CChangeDifficulty::new(
+                level_info.difficulty as u8,
+                level_info.difficulty_locked,
+            ))
+            .await;
+        }
     }
 
     /// Searches for a player by their username across all worlds.
@@ -456,7 +505,7 @@ impl Server {
     pub async fn get_random_player(&self) -> Option<Arc<Player>> {
         let players = self.get_all_players().await;
 
-        players.choose(&mut rand::thread_rng()).map(Arc::<_>::clone)
+        players.choose(&mut rand::rng()).map(Arc::<_>::clone)
     }
 
     /// Searches for a player by their UUID across all worlds.

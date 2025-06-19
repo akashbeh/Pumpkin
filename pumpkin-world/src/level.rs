@@ -1,31 +1,38 @@
+use dashmap::{DashMap, Entry};
+use log::trace;
+use num_traits::Zero;
+use pumpkin_config::{advanced_config, chunk::ChunkFormat};
+use pumpkin_data::Block;
+use pumpkin_util::math::{position::BlockPos, vector2::Vector2};
 use std::{
+    collections::VecDeque,
     path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
-
-use dashmap::{DashMap, Entry};
-use log::trace;
-use num_traits::Zero;
-use pumpkin_config::{advanced_config, chunk::ChunkFormat};
-use pumpkin_util::math::{position::BlockPos, vector2::Vector2};
 use tokio::{
-    sync::{Mutex, Notify, RwLock, mpsc},
+    select,
+    sync::{
+        Mutex, Notify, RwLock,
+        mpsc::{self, UnboundedReceiver},
+    },
     task::JoinHandle,
 };
 use tokio_util::task::TaskTracker;
 
 use crate::{
+    BlockStateId,
+    block::RawBlockState,
     chunk::{
         ChunkData, ChunkParsingError, ChunkReadingError, ScheduledTick, TickPriority,
         format::{anvil::AnvilChunkFile, linear::LinearFile},
         io::{ChunkIO, LoadedData, chunk_file_manager::ChunkFileManager},
     },
     dimension::Dimension,
-    generation::{Seed, WorldGenerator, get_world_gen},
-    world::SimpleWorld,
+    generation::{Seed, get_world_gen, implementation::WorldGenerator},
+    world::{BlockRegistryExt, SimpleWorld},
 };
 
 pub type SyncChunk = Arc<RwLock<ChunkData>>;
@@ -41,6 +48,7 @@ pub type SyncChunk = Arc<RwLock<ChunkData>>;
 /// For more details on world generation, refer to the `WorldGenerator` module.
 pub struct Level {
     pub seed: Seed,
+    block_registry: Arc<dyn BlockRegistryExt>,
     level_folder: LevelFolder,
 
     // Holds this level's spawn chunks, which are always loaded
@@ -55,6 +63,7 @@ pub struct Level {
     world_gen: Arc<dyn WorldGenerator>,
 
     block_ticks: Arc<Mutex<Vec<ScheduledTick>>>,
+    remaining_block_ticks_this_tick: Arc<Mutex<VecDeque<ScheduledTick>>>,
     fluid_ticks: Arc<Mutex<Vec<ScheduledTick>>>,
     /// Tracks tasks associated with this world instance
     tasks: TaskTracker,
@@ -69,7 +78,12 @@ pub struct LevelFolder {
 }
 
 impl Level {
-    pub fn from_root_folder(root_folder: PathBuf, seed: i64, dimension: Dimension) -> Self {
+    pub fn from_root_folder(
+        root_folder: PathBuf,
+        block_registry: Arc<dyn BlockRegistryExt>,
+        seed: i64,
+        dimension: Dimension,
+    ) -> Self {
         // If we are using an already existing world we want to read the seed from the level.dat, If not we want to check if there is a seed in the config, if not lets create a random one
         let region_folder = root_folder.join("region");
         if !region_folder.exists() {
@@ -93,6 +107,7 @@ impl Level {
 
         Self {
             seed,
+            block_registry,
             world_gen,
             level_folder,
             chunk_saver,
@@ -102,6 +117,7 @@ impl Level {
             tasks: TaskTracker::new(),
             shutdown_notifier: Notify::new(),
             block_ticks: Arc::new(Mutex::new(Vec::new())),
+            remaining_block_ticks_this_tick: Arc::new(Mutex::new(VecDeque::new())),
             fluid_ticks: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -306,6 +322,100 @@ impl Level {
         }
     }
 
+    // Stream the chunks (don't collect them and then do stuff with them)
+    /// Spawns a tokio task to stream chunks.
+    /// Important: must be called from an async function (or changed to accept a tokio runtime
+    /// handle)
+    pub fn receive_chunks(
+        self: &Arc<Self>,
+        chunks: Vec<Vector2<i32>>,
+    ) -> UnboundedReceiver<(SyncChunk, bool)> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        // Put this in another thread so we aren't blocking on it
+        let level = self.clone();
+        self.spawn_task(async move {
+            let cancel_notifier = level.shutdown_notifier.notified();
+            let fetch_task = level.fetch_chunks(&chunks, sender);
+
+            // Don't continue to handle chunks if we are shutting down
+            select! {
+                () = cancel_notifier => {},
+                () = fetch_task => {}
+            };
+        });
+
+        receiver
+    }
+
+    pub async fn get_chunk(
+        self: &Arc<Self>,
+        chunk_coordinate: Vector2<i32>,
+    ) -> Arc<RwLock<ChunkData>> {
+        match self.try_get_chunk(chunk_coordinate) {
+            Some(chunk) => chunk.clone(),
+            None => self.receive_chunk(chunk_coordinate).await.0,
+        }
+    }
+
+    pub async fn receive_chunk(
+        self: &Arc<Self>,
+        chunk_pos: Vector2<i32>,
+    ) -> (Arc<RwLock<ChunkData>>, bool) {
+        let mut receiver = self.receive_chunks(vec![chunk_pos]);
+
+        receiver
+            .recv()
+            .await
+            .expect("Channel closed for unknown reason")
+    }
+
+    pub async fn get_block_state(self: &Arc<Self>, position: &BlockPos) -> RawBlockState {
+        let (chunk_coordinate, relative) = position.chunk_and_chunk_relative_position();
+        let chunk = self.get_chunk(chunk_coordinate).await;
+
+        let chunk = chunk.read().await;
+        let Some(id) = chunk.section.get_block_absolute_y(
+            relative.x as usize,
+            relative.y,
+            relative.z as usize,
+        ) else {
+            return RawBlockState {
+                state_id: Block::AIR.default_state_id,
+            };
+        };
+
+        RawBlockState { state_id: id }
+    }
+
+    pub async fn set_block_state(
+        self: &Arc<Self>,
+        position: &BlockPos,
+        block_state_id: BlockStateId,
+    ) -> BlockStateId {
+        let (chunk_coordinate, relative) = position.chunk_and_chunk_relative_position();
+        let chunk = self.get_chunk(chunk_coordinate).await;
+        let mut chunk = chunk.write().await;
+
+        let replaced_block_state_id = chunk
+            .section
+            .get_block_absolute_y(relative.x as usize, relative.y, relative.z as usize)
+            .unwrap();
+
+        if replaced_block_state_id == block_state_id {
+            return block_state_id;
+        }
+
+        chunk.dirty = true;
+
+        chunk.section.set_block_absolute_y(
+            relative.x as usize,
+            relative.y,
+            relative.z as usize,
+            block_state_id,
+        );
+        replaced_block_state_id
+    }
+
     pub async fn write_chunks(&self, chunks_to_write: Vec<(Vector2<i32>, SyncChunk)>) {
         if chunks_to_write.is_empty() {
             return;
@@ -322,7 +432,7 @@ impl Level {
                 let (chunk_coord, _relative_coord) =
                     tick.block_pos.chunk_and_chunk_relative_position();
                 if chunk_coord == *coord {
-                    chunk_data.block_ticks.push(tick.clone());
+                    chunk_data.block_ticks.push(*tick);
                     false
                 } else {
                     true
@@ -332,7 +442,7 @@ impl Level {
                 let (chunk_coord, _relative_coord) =
                     tick.block_pos.chunk_and_chunk_relative_position();
                 if chunk_coord == *coord {
-                    chunk_data.fluid_ticks.push(tick.clone());
+                    chunk_data.fluid_ticks.push(*tick);
                     false
                 } else {
                     true
@@ -478,6 +588,8 @@ impl Level {
 
         let loaded_chunks = self.loaded_chunks.clone();
         let world_gen = self.world_gen.clone();
+        let block_registry = self.block_registry.clone();
+        let self_clone = self.clone();
         let handle_generate = async move {
             let continue_to_generate = Arc::new(AtomicBool::new(true));
             while let Some(pos) = generate_bridge_recv.recv().await {
@@ -489,21 +601,32 @@ impl Level {
                 let world_gen = world_gen.clone();
                 let channel = channel.clone();
                 let cloned_continue_to_generate = continue_to_generate.clone();
-                rayon::spawn(move || {
+                let block_registry = block_registry.clone();
+                let self_clone = self_clone.clone();
+
+                tokio::spawn(async move {
                     // Rayon tasks are queued, so also check it here
                     if !cloned_continue_to_generate.load(Ordering::Relaxed) {
                         return;
                     }
 
-                    let result = loaded_chunks
-                        .entry(pos)
-                        .or_insert_with(|| {
-                            // Avoid possible duplicating work by doing this within the dashmap lock
-                            let generated_chunk = world_gen.generate_chunk(&pos);
-                            Arc::new(RwLock::new(generated_chunk))
-                        })
+                    let result = {
+                        let entry = loaded_chunks.entry(pos); // Get the entry for the position
+
+                        // Check if the entry already exists.
+                        // If not, generate the chunk asynchronously and insert it.
+                        match entry {
+                            Entry::Occupied(entry) => entry.into_ref(),
+                            Entry::Vacant(entry) => {
+                                let generated_chunk = world_gen
+                                    .generate_chunk(&self_clone, block_registry.as_ref(), &pos)
+                                    .await;
+                                entry.insert(Arc::new(RwLock::new(generated_chunk)))
+                            }
+                        }
                         .value()
-                        .clone();
+                        .clone()
+                    };
 
                     if !send_chunk(true, result, &channel) {
                         // Stop any additional queued generations
@@ -532,22 +655,23 @@ impl Level {
         self.loaded_chunks.try_get(&coordinates).try_unwrap()
     }
 
-    pub async fn get_and_tick_block_ticks(&self) -> Vec<ScheduledTick> {
+    pub async fn get_and_tick_block_ticks(&self) -> Arc<Mutex<VecDeque<ScheduledTick>>> {
         let mut block_ticks = self.block_ticks.lock().await;
-        let mut ticks = Vec::new();
+        let mut ticks = VecDeque::new();
         let mut remaining_ticks = Vec::new();
         for mut tick in block_ticks.drain(..) {
             tick.delay = tick.delay.saturating_sub(1);
             if tick.delay == 0 {
-                ticks.push(tick);
+                ticks.push_back(tick);
             } else {
                 remaining_ticks.push(tick);
             }
         }
 
         *block_ticks = remaining_ticks;
-        ticks.sort_by_key(|tick| tick.priority);
-        ticks
+        ticks.make_contiguous().sort_by_key(|tick| tick.priority);
+        *self.remaining_block_ticks_this_tick.lock().await = ticks;
+        self.remaining_block_ticks_this_tick.clone()
     }
 
     pub async fn get_and_tick_fluid_ticks(&self) -> Vec<ScheduledTick> {
@@ -556,7 +680,7 @@ impl Level {
         fluid_ticks.retain_mut(|tick| {
             tick.delay = tick.delay.saturating_sub(1);
             if tick.delay == 0 {
-                ticks.push(tick.clone());
+                ticks.push(*tick);
                 false
             } else {
                 true
@@ -567,8 +691,10 @@ impl Level {
 
     pub async fn is_block_tick_scheduled(&self, block_pos: &BlockPos, block_id: u16) -> bool {
         let block_ticks = self.block_ticks.lock().await;
+        let remaining_block_ticks_this_tick = self.remaining_block_ticks_this_tick.lock().await;
         block_ticks
             .iter()
+            .chain(remaining_block_ticks_this_tick.iter())
             .any(|tick| tick.block_pos == *block_pos && tick.target_block_id == block_id)
     }
 
@@ -595,6 +721,13 @@ impl Level {
 
     pub async fn schedule_fluid_tick(&self, block_id: u16, block_pos: &BlockPos, delay: u16) {
         let mut fluid_ticks = self.fluid_ticks.lock().await;
+        if fluid_ticks
+            .iter()
+            .any(|tick| tick.block_pos == *block_pos && tick.target_block_id == block_id)
+        {
+            // If a fluid tick is already scheduled for this block, we don't need to schedule it again
+            return;
+        }
         fluid_ticks.push(ScheduledTick {
             block_pos: *block_pos,
             delay,

@@ -49,7 +49,6 @@ pub use generation::{
     GlobalRandomConfig, noise_router::proto_noise_router::ProtoNoiseRouters,
     proto_chunk::ProtoChunk, settings::GENERATION_SETTINGS, settings::GeneratorSetting,
 };
-
 pub fn bench_create_and_populate_noise(
     base_router: &ProtoNoiseRouters,
     random_config: &GlobalRandomConfig,

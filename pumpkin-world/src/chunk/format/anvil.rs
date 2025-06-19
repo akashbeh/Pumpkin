@@ -3,6 +3,7 @@ use bytes::*;
 use flate2::read::{GzDecoder, GzEncoder, ZlibDecoder, ZlibEncoder};
 use futures::future::join_all;
 use itertools::Itertools;
+use lz4_java_wrc::Context;
 use pumpkin_config::advanced_config;
 use pumpkin_data::{Block, chunk::ChunkStatus};
 use pumpkin_nbt::{compound::NbtCompound, serializer::to_bytes};
@@ -43,8 +44,8 @@ pub const CHUNK_COUNT: usize = REGION_SIZE * REGION_SIZE;
 /// The number of bytes in a sector (4 KiB)
 const SECTOR_BYTES: usize = 4096;
 
-// 1.21.5
-const WORLD_DATA_VERSION: i32 = 4325;
+// 1.21.6
+const WORLD_DATA_VERSION: i32 = 4435;
 
 #[derive(Clone, Default)]
 pub struct AnvilChunkFormat;
@@ -65,7 +66,7 @@ pub enum Compression {
 pub enum CompressionRead<R: Read> {
     GZip(GzDecoder<R>),
     ZLib(ZlibDecoder<R>),
-    LZ4(lz4::Decoder<R>),
+    LZ4(lz4_java_wrc::Lz4BlockInput<R>),
 }
 
 impl<R: Read> Read for CompressionRead<R> {
@@ -149,8 +150,7 @@ impl Compression {
                 Ok(chunk_data.into_boxed_slice())
             }
             Compression::LZ4 => {
-                let mut decoder =
-                    lz4::Decoder::new(compressed_data).map_err(CompressionError::LZ4Error)?;
+                let mut decoder = lz4_java_wrc::Lz4BlockInput::new(compressed_data);
                 let mut decompressed_data = Vec::new();
                 decoder
                     .read_to_end(&mut decompressed_data)
@@ -161,6 +161,7 @@ impl Compression {
         }
     }
 
+    const LZ4_COMPRESSION_LEVEL_BASE: u32 = 10;
     fn compress_data(
         &self,
         uncompressed_data: &[u8],
@@ -189,19 +190,19 @@ impl Compression {
                     .map_err(CompressionError::ZlibError)?;
                 Ok(chunk_data)
             }
-
             Compression::LZ4 => {
                 let mut compressed_data = Vec::new();
-                let mut encoder = lz4::EncoderBuilder::new()
-                    .level(compression_level)
-                    .build(&mut compressed_data)
+                let block_size = 1 << (Self::LZ4_COMPRESSION_LEVEL_BASE + compression_level);
+                let mut encoder = lz4_java_wrc::Lz4BlockOutput::with_context(
+                    &mut compressed_data,
+                    Context::default(),
+                    block_size,
+                )
+                .map_err(CompressionError::LZ4Error)?;
+                encoder
+                    .write_all(uncompressed_data)
                     .map_err(CompressionError::LZ4Error)?;
-                if let Err(err) = encoder.write_all(uncompressed_data) {
-                    return Err(CompressionError::LZ4Error(err));
-                }
-                if let (_output, Err(err)) = encoder.finish() {
-                    return Err(CompressionError::LZ4Error(err));
-                }
+                drop(encoder);
                 Ok(compressed_data)
             }
             Compression::Custom => todo!(),
@@ -901,7 +902,10 @@ pub async fn chunk_to_bytes(chunk_data: &ChunkData) -> Result<Vec<u8>, ChunkSeri
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
     use pumpkin_config::{AdvancedConfiguration, advanced_config, override_config_for_testing};
+    use pumpkin_data::BlockDirection;
+    use pumpkin_util::math::position::BlockPos;
     use pumpkin_util::math::vector2::Vector2;
     use std::fs;
     use std::path::PathBuf;
@@ -914,7 +918,23 @@ mod tests {
     use crate::chunk::io::{ChunkIO, LoadedData};
     use crate::dimension::Dimension;
     use crate::generation::{Seed, get_world_gen};
-    use crate::level::{LevelFolder, SyncChunk};
+    use crate::level::{Level, LevelFolder, SyncChunk};
+    use crate::world::{BlockAccessor, BlockRegistryExt};
+
+    struct BlockRegistry;
+
+    #[async_trait]
+    impl BlockRegistryExt for BlockRegistry {
+        async fn can_place_at(
+            &self,
+            _block: &pumpkin_data::Block,
+            _block_accessor: &dyn BlockAccessor,
+            _block_pos: &BlockPos,
+            _face: BlockDirection,
+        ) -> bool {
+            true
+        }
+    }
 
     async fn get_chunks(
         saver: &ChunkFileManager<AnvilChunkFile>,
@@ -992,13 +1012,22 @@ mod tests {
         };
         fs::create_dir(&level_folder.region_folder).expect("couldn't create region folder");
         let chunk_saver = ChunkFileManager::<AnvilChunkFile>::default();
+        let block_registry = Arc::new(BlockRegistry);
 
         // Generate chunks
         let mut chunks = vec![];
+        let level = Arc::new(Level::from_root_folder(
+            temp_dir.path().to_path_buf(),
+            block_registry.clone(),
+            0,
+            Dimension::Overworld,
+        ));
         for x in -5..5 {
             for y in -5..5 {
                 let position = Vector2::new(x, y);
-                let chunk = generator.generate_chunk(&position);
+                let chunk = generator
+                    .generate_chunk(&level, block_registry.as_ref(), &position)
+                    .await;
                 chunks.push((position, Arc::new(RwLock::new(chunk))));
             }
         }
@@ -1260,13 +1289,22 @@ mod tests {
         };
         fs::create_dir(&level_folder.region_folder).expect("couldn't create region folder");
         let chunk_saver = ChunkFileManager::<AnvilChunkFile>::default();
+        let block_registry = Arc::new(BlockRegistry);
 
         // Generate chunks
         let mut chunks = vec![];
+        let level = Arc::new(Level::from_root_folder(
+            temp_dir.path().to_path_buf(),
+            block_registry.clone(),
+            0,
+            Dimension::Overworld,
+        ));
         for x in -5..5 {
             for y in -5..5 {
                 let position = Vector2::new(x, y);
-                let chunk = generator.generate_chunk(&position);
+                let chunk = generator
+                    .generate_chunk(&level, block_registry.as_ref(), &position)
+                    .await;
                 chunks.push((position, Arc::new(RwLock::new(chunk))));
             }
         }

@@ -20,6 +20,8 @@ pub mod redstone_torch;
 pub mod redstone_wire;
 pub mod repeater;
 pub mod target_block;
+pub mod tripwire;
+pub mod tripwire_hook;
 pub mod turbo;
 
 pub async fn update_wire_neighbors(world: &Arc<World>, pos: &BlockPos) {
@@ -171,6 +173,7 @@ pub async fn block_receives_redstone_power(world: &World, pos: &BlockPos) -> boo
     false
 }
 
+#[must_use]
 pub fn is_diode(block: &Block) -> bool {
     block == &Block::REPEATER || block == &Block::COMPARATOR
 }
