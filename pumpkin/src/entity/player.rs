@@ -662,7 +662,6 @@ impl Player {
 
         self.last_attacked_ticks.fetch_add(1, Relaxed);
 
-        // DEBUG
         let is_spectator = self.gamemode.load() == GameMode::Spectator;
         self.get_entity().no_clip.store(is_spectator, Ordering::Relaxed);
         if is_spectator || self.get_entity().has_vehicle() {

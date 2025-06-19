@@ -115,19 +115,11 @@ impl BoundingBox {
     }
 
     pub fn min_block_pos(&self) -> BlockPos {
-        BlockPos::new(
-            self.min.x.floor() as i32,
-            self.min.y.floor() as i32,
-            self.min.z.floor() as i32,
-        )
+        BlockPos::floored(self.min)
     }
 
     pub fn max_block_pos(&self) -> BlockPos {
-        BlockPos::new(
-            self.max.x.ceil() as i32,
-            self.max.y.ceil() as i32,
-            self.max.z.ceil() as i32,
-        )
+        BlockPos::ceiled(self.max)
     }
 
     pub fn shift(&self, delta: Vector3<f64>) -> Self {

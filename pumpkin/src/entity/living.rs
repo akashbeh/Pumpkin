@@ -637,8 +637,11 @@ impl EntityBase for LivingEntity {
         self.entity.tick(caller.clone(), server).await;
         self.base_tick().await;
 
-        self.tick_movement(server, caller).await;
+        self.tick_movement(server, caller.clone()).await;
 
+        if caller.get_player().is_some() {
+            return;
+        }
         self.entity.send_pos_rot().await;
         self.entity.send_velocity().await;
     }

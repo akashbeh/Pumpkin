@@ -1807,7 +1807,7 @@ impl World {
         let to = end_pos.lerp(&start_pos, adjust);
         let from = start_pos.lerp(&end_pos, adjust);
 
-        let mut block = BlockPos::floored(from.x, from.y, from.z);
+        let mut block = BlockPos::floored(from);
 
         if hit_check(&block, self).await {
             return (Some(block), None);

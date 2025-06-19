@@ -7,6 +7,7 @@ use living::LivingEntity;
 use player::Player;
 use pumpkin_data::{
     Block,
+    BlockDirection,
     BlockState,
     block_properties::{
         BlockProperties, Facing, HorizontalFacing,
@@ -759,6 +760,7 @@ impl Entity {
             .await;
     }
 
+    // Used to show the location of an entity in debugging
     pub async fn debug_loc(&self) {
         self.world
             .read()
@@ -856,7 +858,7 @@ impl Entity {
     }
 
     /// Applies knockback to the entity, following vanilla Minecraft's mechanics.
-    ///
+    /// LivingEntity.takeKnockback()
     /// This function calculates the entity's new velocity based on the specified knockback strength and direction.
     pub fn apply_knockback(&self, strength: f64, mut x: f64, mut z: f64) {
         // TODO: strength *= 1 - Entity attribute knockback resistance
@@ -1219,8 +1221,50 @@ impl Entity {
         }
     }
 
-    pub async fn push_out_of_blocks(&self, pos: Vector3<f64>) {
-        todo!();
+    pub async fn push_out_of_blocks(&self, center_pos: Vector3<f64>) {
+        let block_pos = BlockPos::floored(center_pos);
+        let delta = block_pos.0.to_f64().sub(&center_pos);
+        let mut min_dist = f64::MAX;
+        let mut direction = BlockDirection::Up;
+        for dir in BlockDirection::all() {
+            if dir == BlockDirection::Down {
+                continue;
+            }
+
+            let offset = dir.to_offset();
+            if self
+                .world
+                .read()
+                .await
+                .get_block_state(&block_pos.offset(offset))
+                .await
+                .is_full_cube()
+            {
+                continue;
+            }
+            let axis = dir.to_axis().into();
+            let dist = if dir.positive() {
+                1.0 - delta.get_axis(axis)
+            } else {
+                delta.get_axis(axis)
+            };
+            if dist < min_dist {
+                min_dist = dist;
+                direction = dir;
+            }
+        }
+        let amplitude = rand::random::<f64>() * 0.2 + 0.1;
+        let axis = direction.to_axis().into();
+        let sign = if direction.positive() {
+            1.0
+        } else {
+            -1.0
+        };
+
+        let mut velo = self.velocity.load();
+        velo = velo * 0.75;
+        velo.set_axis(axis, sign * amplitude);
+        self.velocity.store(velo);
     }
 }
 
