@@ -30,10 +30,10 @@ use pumpkin_config::BasicConfiguration;
 use pumpkin_data::entity::EffectType;
 use pumpkin_data::fluid::{Falling, FluidProperties};
 use pumpkin_data::{
-    Block, BlockState,
+    Block, BlockDirection, BlockState,
     block_properties::{
-        COLLISION_SHAPES, get_block_and_state_by_state_id, get_block_by_state_id,
-        get_state_by_state_id,
+        get_block_and_state_by_state_id, get_block_by_state_id, get_block_collision_shapes,
+        get_block_outline_shapes, get_state_by_state_id,
     },
     entity::{EntityStatus, EntityType},
     fluid::{Fluid, FluidState},
@@ -41,7 +41,6 @@ use pumpkin_data::{
     sound::{Sound, SoundCategory},
     world::{RAW, WorldEvent},
 };
-use pumpkin_data::{BlockDirection, block_properties::get_block_outline_shapes};
 use pumpkin_inventory::equipment_slot::EquipmentSlot;
 use pumpkin_macros::send_cancellable;
 use pumpkin_nbt::{compound::NbtCompound, to_bytes_unnamed};
@@ -1672,9 +1671,8 @@ impl World {
                                 let fluid = Fluid::FLOWING_WATER;
                                 let state = fluid.default_state().clone();
                                 return (fluid, state);
-                          } else {
+                            }
                             break;
-                          }
                         }
                     }
                 }
@@ -2191,6 +2189,38 @@ impl World {
         state.is_side_solid(direction)
     }
 
+    pub fn check_outline<F>(
+        bounding_box: &BoundingBox,
+        pos: BlockPos,
+        state: &BlockState,
+        use_outline_shape: bool,
+        mut using_outline_shape: F,
+    ) -> bool
+    where
+        F: FnMut(&BoundingBox),
+    {
+        let Some(shapes) = get_block_outline_shapes(state.id) else {
+            return false;
+        };
+        if shapes.is_empty() {
+            // Apparently we need this for air and moving pistons?
+            return true;
+        }
+        let mut collided = false;
+        'shapes: for shape in shapes {
+            let collision_shape = shape.at_pos(pos);
+            if collision_shape.intersects(bounding_box) {
+                collided = true;
+
+                if !use_outline_shape {
+                    break 'shapes;
+                }
+                using_outline_shape(&collision_shape);
+            }
+        }
+        collided
+    }
+
     pub fn check_collision<F>(
         bounding_box: &BoundingBox,
         pos: BlockPos,
@@ -2201,18 +2231,24 @@ impl World {
     where
         F: FnMut(&BoundingBox),
     {
-        let mut collided = false;
         if state.is_full_cube() {
-            collided = true;
-
             if use_collision_shape {
-                let collision_shape =
-                    COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(pos);
-                using_collision_shape(&collision_shape);
+                let Some(shapes) = get_block_collision_shapes(state.id) else {
+                    return false;
+                };
+                if let Some(shape) = shapes.into_iter().next() {
+                    using_collision_shape(&shape.at_pos(pos));
+                }
             }
-        } else if !state.is_air() && !state.collision_shapes.is_empty() {
-            'shapes: for shape in state.collision_shapes {
-                let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(pos);
+            return true;
+        }
+        let mut collided = false;
+        if !state.is_air() && !state.collision_shapes.is_empty() {
+            let Some(shapes) = get_block_collision_shapes(state.id) else {
+                return false;
+            };
+            'shapes: for shape in shapes {
+                let collision_shape = shape.at_pos(pos);
                 if collision_shape.intersects(bounding_box) {
                     collided = true;
 
@@ -2276,10 +2312,9 @@ impl World {
     pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {
         let height = EntityType::ITEM.dimension[1] / 2.0;
         let pos = Vector3::new(
-            f64::from(pos.0.x) + 0.5 + rand::thread_rng().gen_range(-0.25..0.25),
-            f64::from(pos.0.y) + 0.5 + rand::thread_rng().gen_range(-0.25..0.25)
-                - f64::from(height),
-            f64::from(pos.0.z) + 0.5 + rand::thread_rng().gen_range(-0.25..0.25),
+            f64::from(pos.0.x) + 0.5 + rand::rng().random_range(-0.25..0.25),
+            f64::from(pos.0.y) + 0.5 + rand::rng().random_range(-0.25..0.25) - f64::from(height),
+            f64::from(pos.0.z) + 0.5 + rand::rng().random_range(-0.25..0.25),
         );
 
         let entity = self.create_entity(pos, EntityType::ITEM);

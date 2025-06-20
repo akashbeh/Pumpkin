@@ -7,7 +7,7 @@ use living::LivingEntity;
 use player::Player;
 use pumpkin_data::{
     Block, BlockDirection, BlockState,
-    block_properties::{BlockProperties, Facing, HorizontalFacing, get_block_outline_shapes, OakFenceGateLikeProperties},
+    block_properties::{BlockProperties, Facing, HorizontalFacing, OakFenceGateLikeProperties},
     damage::DamageType,
     entity::{EntityPose, EntityType},
     fluid::Fluid,
@@ -474,7 +474,11 @@ impl Entity {
                     };
                 let scale_factor = scale_factor_current / scale_factor_new;
                 // TODO
-                let pos = BlockPos::floored(pos.x * scale_factor, pos.y, pos.z * scale_factor);
+                let pos = BlockPos::floored(Vector3::new(
+                    pos.x * scale_factor,
+                    pos.y,
+                    pos.z * scale_factor,
+                ));
                 caller
                     .clone()
                     .teleport(
@@ -978,7 +982,7 @@ impl Entity {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let (block, state) = world.get_block_and_block_state(&pos).await;
-                    let collided = World::check_collision(
+                    let collided = World::check_outline(
                         &bounding_box,
                         pos,
                         &state,
@@ -1065,13 +1069,12 @@ impl Entity {
                 .await;
         }
 
-        let lava_speed = if self.world.read().await.dimension_type
-            == pumpkin_registry::DimensionType::TheNether
-        {
-            0.007
-        } else {
-            0.002_333_333
-        };
+        let lava_speed =
+            if self.world.read().await.dimension_type == VanillaDimensionType::TheNether {
+                0.007
+            } else {
+                0.002_333_333
+            };
         self.push_by_fluid(0.014, fluid_push[0], fluid_n[0]);
         self.push_by_fluid(lava_speed, fluid_push[1], fluid_n[1]);
 

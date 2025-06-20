@@ -1,9 +1,9 @@
 use crate::block_properties::{Axis, Facing, HorizontalFacing};
-
 use pumpkin_util::{
     math::vector3::{Axis as MathAxis, Vector3},
     random::{RandomGenerator, RandomImpl},
 };
+use serde::Deserialize;
 
 impl From<MathAxis> for Axis {
     fn from(a: MathAxis) -> Self {

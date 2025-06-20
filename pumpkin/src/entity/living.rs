@@ -221,7 +221,7 @@ impl LivingEntity {
     pub async fn is_in_powder_snow(&self) -> bool {
         let world = self.entity.world.read().await;
         let block_pos = self.entity.block_pos.load();
-        world.get_block(&block_pos).await == Block::POWDER_SNOW
+        world.get_block(&block_pos).await == pumpkin_data::Block::POWDER_SNOW
     }
 
     pub async fn update_fall_distance(
@@ -232,10 +232,7 @@ impl LivingEntity {
     ) {
         if ground {
             let fall_distance = self.fall_distance.swap(0.0);
-            if fall_distance <= 0.0
-                || dont_damage
-                || self.is_in_powder_snow().await
-            {
+            if fall_distance <= 0.0 || dont_damage || self.is_in_powder_snow().await {
                 return;
             }
 

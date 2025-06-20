@@ -562,8 +562,7 @@ impl Player {
         // TODO: Stop riding
 
         self.get_entity().set_pose(EntityPose::Sleeping).await;
-        self.living_entity
-            .set_pos(bed_head_pos.to_f64().add_raw(0.5, 0.6875, 0.5));
+        self.set_pos(bed_head_pos.to_f64().add_raw(0.5, 0.6875, 0.5));
         self.get_entity()
             .send_meta_data(&[Metadata::new(
                 SLEEPING_POS_ID,

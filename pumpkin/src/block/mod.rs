@@ -66,7 +66,7 @@ use loot::LootTableExt;
 use pumpkin_data::block_properties::Integer0To15;
 use pumpkin_data::{Block, BlockState};
 
-use pumpkin_util::math::{position::BlockPos, vector3::Vector3};
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::random::{RandomGenerator, get_seed, xoroshiro128::Xoroshiro};
 use pumpkin_world::BlockStateId;
 

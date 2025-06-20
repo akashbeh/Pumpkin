@@ -1412,7 +1412,7 @@ pub(crate) fn build() -> TokenStream {
             let state = get_state_by_state_id(state_id)?;
             let mut shapes: Vec<CollisionShape> = vec![];
             for i in 0..state.collision_shapes.len() {
-               let shape = &COLLISION_SHAPES[state.collision_shapes[i] as usize];
+                let shape = &COLLISION_SHAPES[state.collision_shapes[i] as usize];
                 shapes.push(*shape);
             }
             Some(shapes)
@@ -1425,21 +1425,6 @@ pub(crate) fn build() -> TokenStream {
                 let shape = &COLLISION_SHAPES[state.outline_shapes[i] as usize];
                 shapes.push(*shape);
             }
-            let block = get_block_by_state_id(state_id)?;
-            if block.properties(state.id).and_then(|properties| {
-                properties
-                    .to_props()
-                    .into_iter()
-                    .find(|p| p.0 == "waterlogged")
-                    .map(|(_, value)| value == true.to_string())
-            }) == Some(true)
-            {
-                // If the block is waterlogged, add a water shape
-                let shape =
-                    &CollisionShape::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.875, 1.0));
-                shapes.push(*shape);
-            }
-
             Some(shapes)
         }
 
