@@ -728,7 +728,7 @@ pub(crate) fn build() -> TokenStream {
                     return self.states[0].clone();
                 }
                 let default_state_id = self.default_state().block_state_id;
-                if state_id < default_state_id || state_id >= default_state_id + self.states.len() {
+                if state_id < default_state_id || state_id >= default_state_id + self.states.len() as u16 {
                     panic!("Invalid state id {} for fluid {}", state_id, self.name);
                 }
                 let idx = (state_id % default_state_id) as usize;
