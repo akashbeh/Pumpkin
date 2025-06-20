@@ -543,7 +543,7 @@ pub(crate) fn build() -> TokenStream {
         let blast_resistance = state.blast_resistance;
         let block_state_id = state.block_state_id;
         let is_still = state.is_still;
-        let is_source = level == 1 && is_still;
+        let is_source = level == 8 && is_still;
         let falling = false;
         quote! {
             PartialFluidState {
@@ -728,7 +728,7 @@ pub(crate) fn build() -> TokenStream {
                     return self.states[0].clone();
                 }
                 let default_state_id = self.default_state().block_state_id;
-                if state_id < default_state_id || state_id >= default_state_id * 2 {
+                if state_id < default_state_id || state_id >= default_state_id + self.states.len() {
                     panic!("Invalid state id {} for fluid {}", state_id, self.name);
                 }
                 let idx = (state_id % default_state_id) as usize;
