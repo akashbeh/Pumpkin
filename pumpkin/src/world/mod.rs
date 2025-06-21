@@ -2202,10 +2202,6 @@ impl World {
         let Some(shapes) = get_block_outline_shapes(state.id) else {
             return false;
         };
-        if shapes.is_empty() {
-            // Apparently we need this for air and moving pistons?
-            return true;
-        }
         let mut collided = false;
         'shapes: for shape in shapes {
             let collision_shape = shape.at_pos(pos);
