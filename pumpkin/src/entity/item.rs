@@ -93,7 +93,7 @@ impl EntityBase for ItemEntity {
         let pos = self.entity.pos.load();
         let bounding_box = self.entity.bounding_box.load();
 
-        let no_clip = self
+        let no_clip = !self
             .entity
             .world
             .read()
