@@ -2206,19 +2206,19 @@ impl World {
             // Apparently we need this for air and moving pistons
             return true;
         }
-        let mut collided = false;
+        let mut inside = false;
         'shapes: for shape in shapes {
-            let collision_shape = shape.at_pos(pos);
-            if collision_shape.intersects(bounding_box) {
-                collided = true;
+            let outline_shape = shape.at_pos(pos);
+            if outline_shape.intersects(bounding_box) {
+                inside = true;
 
                 if !use_outline_shape {
                     break 'shapes;
                 }
-                using_outline_shape(&collision_shape);
+                using_outline_shape(&outline_shape);
             }
         }
-        collided
+        inside
     }
 
     pub fn check_collision<F>(
@@ -2231,29 +2231,18 @@ impl World {
     where
         F: FnMut(&BoundingBox),
     {
-        if state.is_full_cube() {
-            if use_collision_shape {
-                let Some(shapes) = get_block_collision_shapes(state.id) else {
-                    return false;
-                };
-                if let Some(shape) = shapes.into_iter().next() {
-                    using_collision_shape(&shape.at_pos(pos));
-                }
-            }
-            return true;
-        }
         let mut collided = false;
-        if !state.is_air() && !state.collision_shapes.is_empty() {
+        if !state.is_air() && state.is_solid() && !state.collision_shapes.is_empty() {
             let Some(shapes) = get_block_collision_shapes(state.id) else {
                 return false;
             };
-            'shapes: for shape in shapes {
+            for shape in shapes {
                 let collision_shape = shape.at_pos(pos);
                 if collision_shape.intersects(bounding_box) {
                     collided = true;
 
                     if !use_collision_shape {
-                        break 'shapes;
+                        break;
                     }
                     using_collision_shape(&collision_shape);
                 }
