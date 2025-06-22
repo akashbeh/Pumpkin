@@ -123,7 +123,7 @@ impl EntityBase for ItemEntity {
             tick_move = (item_age + self.entity.entity_id) % 4 == 0;
         }
         if tick_move {
-            //self.entity.move_entity(caller.clone(), velo).await;
+            self.entity.move_entity(caller.clone(), velo).await;
 
             self.entity.tick_block_collisions(&caller, server).await;
 
