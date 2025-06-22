@@ -2295,10 +2295,10 @@ impl World {
                 println!("Empty? Bounding box {:?}", bounding_box);
                 println!("Pos: {:?}", pos);
                 println!("Block: {:?}", self.get_block(&pos).await);
-                return true;
+                return false;
             }
         }
-        false
+        true
     }
 
     pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {
