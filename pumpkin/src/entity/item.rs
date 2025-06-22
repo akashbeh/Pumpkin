@@ -100,6 +100,7 @@ impl EntityBase for ItemEntity {
             .await
             .is_space_empty(bounding_box.expand(-1.0e-7, -1.0e-7, -1.0e-7))
             .await;
+        let no_clip = false;
         self.entity.no_clip.store(no_clip, Relaxed);
         if no_clip {
             self.entity
