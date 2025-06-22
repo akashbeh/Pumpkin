@@ -2271,7 +2271,7 @@ impl World {
         let mut positions = Vec::new();
 
         // Include downwards for fences
-        let min = BlockPos::floored(bounding_box.min.sub_raw(0.0, -0.50001, 0.0));
+        let min = BlockPos::floored(bounding_box.min.add_raw(0.0, -0.50001, 0.0));
         let max = bounding_box.max_block_pos();
         for x in min.0.x..=max.0.x {
             for y in min.0.y..=max.0.y {
