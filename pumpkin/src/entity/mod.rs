@@ -199,6 +199,8 @@ pub struct Entity {
     pub no_clip: AtomicBool,
     /// Multiplies movement for one tick before being reset
     pub movement_multiplier: AtomicCell<Vector3<f64>>,
+    /// Determines whether the entity's velocity needs to be sent
+    pub velocity_dirty: AtomicBool,
 }
 
 impl Entity {
@@ -258,6 +260,7 @@ impl Entity {
             portal_manager: Mutex::new(None),
             no_clip: AtomicBool::new(false),
             movement_multiplier: AtomicCell::new(Vector3::default()),
+            velocity_dirty: AtomicBool::new(true),
         }
     }
 
@@ -893,6 +896,7 @@ impl Entity {
         if strength <= 0.0 {
             return;
         }
+        self.velocity_dirty.store(true, Ordering::Relaxed);
         // This has some vanilla magic
         while x.mul_add(x, z * z) < 1.0E-5 {
             x = (rand::random::<f64>() - rand::random::<f64>()) * 0.01;

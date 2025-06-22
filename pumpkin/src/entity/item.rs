@@ -64,7 +64,8 @@ impl ItemEntity {
 #[async_trait]
 impl EntityBase for ItemEntity {
     async fn tick(&self, caller: Arc<dyn EntityBase>, server: &Server) {
-        self.entity.tick(caller.clone(), server).await;
+        let entity = &self.entity;
+        entity.tick(caller.clone(), server).await;
 
         {
             let mut delay = self.pickup_delay.lock().await;
@@ -72,14 +73,15 @@ impl EntityBase for ItemEntity {
         };
 
         // Gravity and buoyancy
-        let mut velo = self.entity.velocity.load();
-        if self.entity.touching_water.load(Relaxed) && self.entity.water_height.load() > 0.1 {
+        let original_velo = entity.velocity.load();
+        let mut velo = original_velo;
+        if entity.touching_water.load(Relaxed) && entity.water_height.load() > 0.1 {
             velo.x *= 0.99;
             velo.z *= 0.99;
             if velo.y < 0.06 {
                 velo.y += 5.0e-4;
             }
-        } else if self.entity.touching_lava.load(Relaxed) && self.entity.lava_height.load() > 0.1 {
+        } else if entity.touching_lava.load(Relaxed) && entity.lava_height.load() > 0.1 {
             velo.x *= 0.95;
             velo.z *= 0.95;
             if velo.y < 0.06 {
@@ -88,10 +90,10 @@ impl EntityBase for ItemEntity {
         } else {
             velo.y -= self.get_gravity();
         }
-        self.entity.velocity.store(velo);
+        entity.velocity.store(velo);
 
-        let pos = self.entity.pos.load();
-        let bounding_box = self.entity.bounding_box.load();
+        let pos = entity.pos.load();
+        let bounding_box = entity.bounding_box.load();
 
         let no_clip = !self
             .entity
@@ -100,9 +102,9 @@ impl EntityBase for ItemEntity {
             .await
             .is_space_empty(bounding_box.expand(-1.0e-7, -1.0e-7, -1.0e-7))
             .await;
-        self.entity.no_clip.store(no_clip, Relaxed);
+        entity.no_clip.store(no_clip, Relaxed);
         if no_clip {
-            self.entity
+            entity
                 .push_out_of_blocks(Vector3::new(
                     pos.x,
                     f64::midpoint(bounding_box.min.y, bounding_box.max.y),
@@ -111,45 +113,51 @@ impl EntityBase for ItemEntity {
                 .await;
         }
 
-        let mut velo = self.entity.velocity.load(); // In case push_out_of_blocks modifies it
+        let mut velo = entity.velocity.load(); // In case push_out_of_blocks modifies it
         let mut tick_move =
-            !self.entity.on_ground.load(Relaxed) || velo.horizontal_length_squared() > 1.0e-5;
+            !entity.on_ground.load(Relaxed) || velo.horizontal_length_squared() > 1.0e-5;
         if !tick_move {
             let Ok(item_age) = i32::try_from(self.item_age.load(Relaxed)) else {
-                self.entity.remove().await;
+                entity.remove().await;
                 return;
             };
-            tick_move = (item_age + self.entity.entity_id) % 4 == 0;
+            tick_move = (item_age + entity.entity_id) % 4 == 0;
         }
         if tick_move {
-            self.entity.move_entity(caller.clone(), velo).await;
+            entity.move_entity(caller.clone(), velo).await;
 
-            self.entity.tick_block_collisions(&caller, server).await;
+            entity.tick_block_collisions(&caller, server).await;
 
             let mut friction = 0.98;
-            let on_ground = self.entity.on_ground.load(Relaxed);
+            let on_ground = entity.on_ground.load(Relaxed);
             if on_ground {
-                let block_affecting_velo = self.entity.get_block_with_y_offset(0.999_999).await.1;
+                let block_affecting_velo = entity.get_block_with_y_offset(0.999_999).await.1;
                 friction *= f64::from(block_affecting_velo.slipperiness);
             }
             velo = velo.multiply(friction, 0.98, friction);
             if on_ground && velo.y < 0.0 {
                 velo = velo.multiply(1.0, -0.5, 1.0);
             }
-            self.entity.velocity.store(velo);
+            entity.velocity.store(velo);
         }
 
         // TODO merge;
 
-        self.entity.update_fluid_state(&caller).await;
+        entity.update_fluid_state(&caller).await;
 
         let age = self.item_age.fetch_add(1, Relaxed);
         if age >= 6000 {
-            self.entity.remove().await;
+            entity.remove().await;
         }
 
-        self.entity.send_pos_rot().await;
-        self.entity.send_velocity().await;
+        let velocity_dirty = entity.velocity_dirty.swap(false, Relaxed)
+            || entity.touching_water.load(Relaxed)
+            || entity.touching_lava.load(Relaxed)
+            || entity.velocity.load().sub(&original_velo).length_squared() > 0.01;
+        if velocity_dirty {
+            entity.send_pos_rot().await;
+            entity.send_velocity().await;
+        }
     }
 
     async fn init_data_tracker(&self) {

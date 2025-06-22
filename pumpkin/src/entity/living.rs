@@ -642,6 +642,7 @@ impl LivingEntity {
             velo.y += yaw.cos() * 0.2;
         }
         self.entity.velocity.store(velo);
+        self.entity.velocity_dirty.store(true, Relaxed);
     }
 
     async fn get_jump_velocity(&self, mut strength: f64) -> f64 {
