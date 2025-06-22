@@ -2189,7 +2189,7 @@ impl World {
 
         state.is_side_solid(direction)
     }
-
+/*
     pub fn check_outline<F>(
         bounding_box: &BoundingBox,
         pos: BlockPos,
@@ -2218,7 +2218,7 @@ impl World {
             }
         }
         collided
-    }
+    }*/
 
     pub fn check_collision<F>(
         bounding_box: &BoundingBox,

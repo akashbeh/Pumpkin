@@ -818,6 +818,7 @@ impl Entity {
             .get_block_collisions(bounding_box.stretch(movement))
             .await;
         if collisions.is_empty() {
+            println!("No collisions");
             return movement;
         }
 
@@ -1239,10 +1240,12 @@ impl Entity {
     async fn move_entity(&self, caller: Arc<dyn EntityBase>, mut motion: Vector3<f64>) {
         // TODO: Player movement checking (anticheat)
         if caller.get_player().is_some() {
+            println!("Player");
             return;
         }
 
         if self.no_clip.load(Ordering::Relaxed) {
+            println!("No clip");
             self.move_pos(motion);
             return;
         }
