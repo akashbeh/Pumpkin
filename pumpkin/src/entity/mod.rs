@@ -982,7 +982,7 @@ impl Entity {
                 for z in min.0.z..=max.0.z {
                     let pos = BlockPos::new(x, y, z);
                     let (block, state) = world.get_block_and_block_state(&pos).await;
-                    let collided = World::check_outline(
+                    let collided = World::check_collision(
                         &bounding_box,
                         pos,
                         &state,

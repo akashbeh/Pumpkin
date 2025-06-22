@@ -2230,6 +2230,41 @@ impl World {
     where
         F: FnMut(&BoundingBox),
     {
+        let mut collided = false;
+        if state.is_full_cube() {
+            collided = true;
+
+            if use_collision_shape {
+                let collision_shape =
+                    COLLISION_SHAPES[state.collision_shapes[0] as usize].at_pos(pos);
+                using_collision_shape(&collision_shape);
+            }
+        } else if !state.is_air() && !state.collision_shapes.is_empty() {
+            'shapes: for shape in state.collision_shapes {
+                let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(pos);
+                if collision_shape.intersects(bounding_box) {
+                    collided = true;
+
+                    if !use_collision_shape {
+                        break 'shapes;
+                    }
+                    using_collision_shape(&collision_shape);
+                }
+            }
+        }
+        collided
+    }
+/*
+    pub fn check_collision<F>(
+        bounding_box: &BoundingBox,
+        pos: BlockPos,
+        state: &BlockState,
+        use_collision_shape: bool,
+        mut using_collision_shape: F,
+    ) -> bool
+    where
+        F: FnMut(&BoundingBox),
+    {
         if state.is_full_cube() {
             if use_collision_shape {
                 let shape = COLLISION_SHAPES[state.collision_shapes[0] as usize];
@@ -2253,7 +2288,7 @@ impl World {
             }
         }
         collided
-    }
+    }*/
 
     // For adjusting movement
     pub async fn get_block_collisions(
