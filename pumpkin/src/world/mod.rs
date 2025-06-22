@@ -2301,7 +2301,8 @@ impl World {
         let max = bounding_box.max_block_pos();
         for pos in BlockPos::iterate(min, max) {
             let state = self.get_block_state(&pos).await;
-            let collided = Self::check_collision(&bounding_box, pos, &state, true, |shape| {println!("{:?}", shape);});
+            let collided = Self::check_collision(&bounding_box, pos, &state, false, |_| {});
+            println!("Pos: {:?}", pos);
             if collided {
                 return true;
             }
