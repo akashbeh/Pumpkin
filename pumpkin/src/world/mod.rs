@@ -32,6 +32,7 @@ use pumpkin_data::fluid::{Falling, FluidProperties};
 use pumpkin_data::{
     Block, BlockDirection, BlockState,
     block_properties::{
+        COLLISION_SHAPES,
         get_block_and_state_by_state_id, get_block_by_state_id, get_block_collision_shapes,
         get_block_outline_shapes, get_state_by_state_id,
     },
@@ -2199,16 +2200,14 @@ impl World {
     where
         F: FnMut(&BoundingBox),
     {
-        let Some(shapes) = get_block_outline_shapes(state.id) else {
-            return false;
-        };
+        let shapes = state.outline_shapes;
         if shapes.is_empty() {
             // Apparently we need this for air and moving pistons
             return true;
         }
         let mut collided = false;
         'shapes: for shape in shapes {
-            let collision_shape = shape.at_pos(pos);
+            let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(pos);
             if collision_shape.intersects(bounding_box) {
                 collided = true;
 
@@ -2233,22 +2232,16 @@ impl World {
     {
         if state.is_full_cube() {
             if use_collision_shape {
-                let Some(shapes) = get_block_collision_shapes(state.id) else {
-                    return false;
-                };
-                if let Some(shape) = shapes.into_iter().next() {
-                    using_collision_shape(&shape.at_pos(pos));
-                }
+                let shape = COLLISION_SHAPES[state.collision_shapes[0] as usize];
+                using_collision_shape(&shape.at_pos(pos));
             }
             return true;
         }
         let mut collided = false;
         if !state.is_air() && !state.collision_shapes.is_empty() {
-            let Some(shapes) = get_block_collision_shapes(state.id) else {
-                return false;
-            };
+            let shapes = state.collision_shapes;
             'shapes: for shape in shapes {
-                let collision_shape = shape.at_pos(pos);
+                let collision_shape = COLLISION_SHAPES[*shape as usize].at_pos(pos);
                 if collision_shape.intersects(bounding_box) {
                     collided = true;
 
