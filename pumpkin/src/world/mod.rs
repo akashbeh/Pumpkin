@@ -2292,10 +2292,10 @@ impl World {
             let state = self.get_block_state(&pos).await;
             let collided = Self::check_collision(&bounding_box, pos, &state, false, |_| ());
             if collided {
-                return true;
+                return false;
             }
         }
-        false
+        true
     }
 
     pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {
