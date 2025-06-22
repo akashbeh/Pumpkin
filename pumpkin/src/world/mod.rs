@@ -2292,8 +2292,9 @@ impl World {
         for pos in BlockPos::iterate(min, max) {
             let state = self.get_block_state(&pos).await;
             let collided = Self::check_collision(&bounding_box, pos, &state, false, |_| {});
-            println!("Pos: {:?}", pos);
             if collided {
+                println!("Pos: {:?}", pos);
+                println!("Block: {:?}", self.get_block(&pos).await);
                 return true;
             }
         }
