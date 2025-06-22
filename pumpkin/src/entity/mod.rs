@@ -1272,7 +1272,7 @@ impl Entity {
 
     pub async fn push_out_of_blocks(&self, center_pos: Vector3<f64>) {
         let block_pos = BlockPos::floored(center_pos);
-        let delta = block_pos.0.to_f64().sub(&center_pos);
+        let delta = center_pos.sub(&block_pos.0.to_f64());
         let mut min_dist = f64::MAX;
         let mut direction = BlockDirection::Up;
         for dir in BlockDirection::all() {
@@ -1291,11 +1291,11 @@ impl Entity {
             {
                 continue;
             }
-            let axis = dir.to_axis().into();
+            let component = delta.get_axis(dir.to_axis().into());
             let dist = if dir.positive() {
-                1.0 - delta.get_axis(axis)
+                1.0 - component
             } else {
-                delta.get_axis(axis)
+                component
             };
             if dist < min_dist {
                 min_dist = dist;
