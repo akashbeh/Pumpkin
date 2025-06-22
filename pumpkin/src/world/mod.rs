@@ -2286,13 +2286,13 @@ impl World {
     }
 
     pub async fn is_space_empty(&self, bounding_box: BoundingBox) -> bool {
-        println!("Empty? Bounding box {:?}", bounding_box);
         let min = bounding_box.min_block_pos();
         let max = bounding_box.max_block_pos();
         for pos in BlockPos::iterate(min, max) {
             let state = self.get_block_state(&pos).await;
             let collided = Self::check_collision(&bounding_box, pos, &state, false, |_| {});
             if collided {
+                println!("Empty? Bounding box {:?}", bounding_box);
                 println!("Pos: {:?}", pos);
                 println!("Block: {:?}", self.get_block(&pos).await);
                 return true;
