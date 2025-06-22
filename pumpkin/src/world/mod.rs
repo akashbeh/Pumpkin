@@ -2297,6 +2297,7 @@ impl World {
     }
 
     pub async fn is_space_empty(&self, bounding_box: BoundingBox) -> bool {
+        println!("Empty? Bounding box {:?}", bounding_box);
         let min = bounding_box.min_block_pos();
         let max = bounding_box.max_block_pos();
         for pos in BlockPos::iterate(min, max) {
