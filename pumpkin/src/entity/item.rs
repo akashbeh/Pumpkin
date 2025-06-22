@@ -127,12 +127,13 @@ impl EntityBase for ItemEntity {
             self.entity.tick_block_collisions(&caller, server).await;
 
             let mut friction = 0.98;
-            if self.entity.on_ground.load(Relaxed) {
+            let on_ground = self.entity.on_ground.load(Relaxed);
+            if on_ground {
                 let block_affecting_velo = self.entity.get_block_with_y_offset(0.999_999).await.1;
                 friction *= f64::from(block_affecting_velo.slipperiness);
             }
             velo = velo.multiply(friction, 0.98, friction);
-            if velo.y < 0.0 && self.entity.on_ground.load(Relaxed) {
+            if on_ground && velo.y < 0.0 {
                 velo = velo.multiply(1.0, -0.5, 1.0);
             }
             self.entity.velocity.store(velo);
