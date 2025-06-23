@@ -59,6 +59,10 @@ impl ItemEntity {
             pickup_delay: Mutex::new(pickup_delay), // Vanilla pickup delay is 10 ticks
         }
     }
+
+    async fn try_merge(&self) {
+        // TODO
+    }
 }
 
 #[async_trait]
@@ -141,14 +145,22 @@ impl EntityBase for ItemEntity {
             entity.velocity.store(velo);
         }
 
-        // TODO merge;
+        let age = self.item_age.fetch_add(1, Relaxed);
+        if age >= 5999 {
+            entity.remove().await;
+            return;
+        }
+
+        let n = if entity.last_pos.load().sub(&entity.pos.load()).length_squared() != 0.0 {
+            2
+        } else {
+            40
+        };
+        if age % n == 0 {
+            self.try_merge().await;
+        }
 
         entity.update_fluid_state(&caller).await;
-
-        let age = self.item_age.fetch_add(1, Relaxed);
-        if age >= 6000 {
-            entity.remove().await;
-        }
 
         let velocity_dirty = entity.velocity_dirty.swap(false, Relaxed)
             || entity.touching_water.load(Relaxed)

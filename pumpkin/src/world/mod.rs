@@ -76,7 +76,7 @@ use pumpkin_util::{
     math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3},
 };
 use pumpkin_world::{
-    BlockStateId, GENERATION_SETTINGS, GeneratorSetting, biome, block::entities::BlockEntity,
+    BlockStateId, GENERATION_SETTINGS, GeneratorSetting, generation::settings::GenerationSettings, biome, block::entities::BlockEntity,
 };
 use pumpkin_world::{chunk::ChunkData, world::BlockAccessor};
 use pumpkin_world::{chunk::TickPriority, level::Level};
@@ -160,21 +160,7 @@ impl World {
         dimension_type: VanillaDimensionType,
         block_registry: Arc<BlockRegistry>,
     ) -> Self {
-        // TODO
-        let generation_settings = match dimension_type {
-            VanillaDimensionType::Overworld => GENERATION_SETTINGS
-                .get(&GeneratorSetting::Overworld)
-                .unwrap(),
-            VanillaDimensionType::OverworldCaves => todo!(),
-            VanillaDimensionType::TheEnd => {
-                GENERATION_SETTINGS.get(&GeneratorSetting::End).unwrap()
-            }
-            VanillaDimensionType::TheNether => {
-                GENERATION_SETTINGS.get(&GeneratorSetting::Nether).unwrap()
-            }
-        };
-
-        Self {
+        let mut world = Self {
             level: Arc::new(level),
             level_info: Arc::new(RwLock::new(level_info)),
             players: Arc::new(RwLock::new(HashMap::new())),
@@ -185,9 +171,26 @@ impl World {
             dimension_type,
             weather: Mutex::new(Weather::new()),
             block_registry,
-            sea_level: generation_settings.sea_level,
+            sea_level: 0,
             synced_block_event_queue: Mutex::new(Vec::new()),
             unsent_block_changes: Mutex::new(HashMap::new()),
+        };
+        world.sea_level = world.get_generation_settings().sea_level;
+        world
+    }
+
+    fn get_generation_settings(&self) -> &GenerationSettings {
+        match self.dimension_type {
+            VanillaDimensionType::Overworld => GENERATION_SETTINGS
+                .get(&GeneratorSetting::Overworld)
+                .unwrap(),
+            VanillaDimensionType::OverworldCaves => todo!(),
+            VanillaDimensionType::TheEnd => {
+                GENERATION_SETTINGS.get(&GeneratorSetting::End).unwrap()
+            }
+            VanillaDimensionType::TheNether => {
+                GENERATION_SETTINGS.get(&GeneratorSetting::Nether).unwrap()
+            }
         }
     }
 
@@ -521,20 +524,8 @@ impl World {
 
     /// Gets the y position of the first non air block from the top down
     pub async fn get_top_block(&self, position: Vector2<i32>) -> i32 {
-        // TODO: this is bad
-        let generation_settings = match self.dimension_type {
-            VanillaDimensionType::Overworld => GENERATION_SETTINGS
-                .get(&GeneratorSetting::Overworld)
-                .unwrap(),
-            VanillaDimensionType::OverworldCaves => todo!(),
-            VanillaDimensionType::TheEnd => {
-                GENERATION_SETTINGS.get(&GeneratorSetting::End).unwrap()
-            }
-            VanillaDimensionType::TheNether => {
-                GENERATION_SETTINGS.get(&GeneratorSetting::Nether).unwrap()
-            }
-        };
-        for y in (i32::from(generation_settings.shape.min_y)
+        let generation_settings = self.get_generation_settings();
+        for y in (self.get_min_y()
             ..=i32::from(generation_settings.shape.height))
             .rev()
         {
@@ -546,6 +537,10 @@ impl World {
             return y;
         }
         i32::from(generation_settings.shape.height)
+    }
+
+    pub fn get_min_y(&self) -> i32 {
+        i32::from(self.get_generation_settings().shape.min_y)
     }
 
     #[expect(clippy::too_many_lines)]

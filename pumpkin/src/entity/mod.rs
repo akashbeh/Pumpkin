@@ -32,7 +32,6 @@ use pumpkin_util::math::{
     vector3::Vector3,
     wrap_degrees,
 };
-use pumpkin_world::item::ItemStack;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::sync::{
@@ -543,24 +542,9 @@ impl Entity {
         self.pitch.store(pitch.clamp(-90.0, 90.0) % 360.0);
     }
 
-    pub fn get_drops(&self) -> Option<Vec<ItemStack>> {
-        // TODO
-        // self.entity_type.get_loot()
-        None
-    }
-
     /// Removes the `Entity` from their current `World`
     pub async fn remove(&self) {
-        let world = self.world.read().await;
-
-        if let Some(loot) = self.get_drops() {
-            for stack in loot {
-                world.drop_stack(&self.block_pos.load(), stack).await;
-            }
-        }
-
         self.world.read().await.remove_entity(self).await;
-        // TODO: Drops
     }
 
     pub fn create_spawn_packet(&self) -> CSpawnEntity {
@@ -1343,7 +1327,15 @@ impl EntityBase for Entity {
         }
         self.set_on_fire(self.fire_ticks.load(Ordering::Relaxed) > 0)
             .await;
-        // TODO: Tick
+
+        let void_y = self.world.read().await.get_min_y() - 64;
+        if self.block_pos.load().0.y < void_y {
+            if let Some(living) = caller.get_living_entity() {
+                living.damage(4.0, DamageType::OUT_OF_WORLD).await;
+            } else {
+                self.remove().await;
+            }
+        }
     }
 
     async fn teleport(
