@@ -14,6 +14,7 @@ use blocks::fences::FenceBlock;
 use blocks::fire::fire::FireBlock;
 use blocks::fire::soul_fire::SoulFireBlock;
 use blocks::glass_panes::GlassPaneBlock;
+use blocks::grindstone::GrindstoneBlock;
 use blocks::iron_bars::IronBarsBlock;
 use blocks::logs::LogBlock;
 use blocks::nether_portal::NetherPortalBlock;
@@ -33,6 +34,7 @@ use blocks::plant::short_plant::ShortPlantBlock;
 use blocks::plant::tall_plant::TallPlantBlock;
 use blocks::pumpkin::PumpkinBlock;
 use blocks::redstone::buttons::ButtonBlock;
+use blocks::redstone::comparator::ComparatorBlock;
 use blocks::redstone::observer::ObserverBlock;
 use blocks::redstone::pressure_plate::plate::PressurePlateBlock;
 use blocks::redstone::pressure_plate::weighted::WeightedPressurePlateBlock;
@@ -71,6 +73,7 @@ use pumpkin_util::random::{RandomGenerator, get_seed, xoroshiro128::Xoroshiro};
 use pumpkin_world::BlockStateId;
 
 use crate::block::blocks::plant::roots::RootsBlock;
+use crate::block::loot::LootContextParameters;
 use crate::block::registry::BlockRegistry;
 use crate::world::World;
 use crate::{block::blocks::crafting_table::CraftingTableBlock, entity::player::Player};
@@ -79,7 +82,7 @@ use std::sync::Arc;
 
 pub mod blocks;
 mod fluid;
-mod loot;
+pub mod loot;
 pub mod pumpkin_block;
 pub mod pumpkin_fluid;
 pub mod registry;
@@ -104,6 +107,7 @@ pub fn default_registry() -> Arc<BlockRegistry> {
     manager.register(FenceBlock);
     manager.register(FurnaceBlock);
     manager.register(GlassPaneBlock);
+    manager.register(GrindstoneBlock);
     manager.register(IronBarsBlock);
     manager.register(JukeboxBlock);
     manager.register(LogBlock);
@@ -158,6 +162,7 @@ pub fn default_registry() -> Arc<BlockRegistry> {
     manager.register(RedstoneTorchBlock);
     manager.register(RedstoneWireBlock);
     manager.register(RepeaterBlock);
+    manager.register(ComparatorBlock);
     manager.register(TargetBlock);
     manager.register(BarrelBlock);
 
@@ -185,13 +190,10 @@ pub async fn drop_loot(
     block: &Block,
     pos: &BlockPos,
     experience: bool,
-    state_id: BlockStateId,
+    params: LootContextParameters,
 ) {
     if let Some(loot_table) = &block.loot_table {
-        let props =
-            Block::properties(block, state_id).map_or_else(Vec::new, |props| props.to_props());
-
-        for stack in loot_table.get_loot(&props) {
+        for stack in loot_table.get_loot(params) {
             world.drop_stack(pos, stack).await;
         }
     }

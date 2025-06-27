@@ -1,4 +1,4 @@
-use pumpkin_util::math::vector3::Vector3;
+use pumpkin_util::math::{position::BlockPos, vector3::Vector3};
 
 use crate::entity::living::LivingEntity;
 
@@ -35,6 +35,8 @@ impl Navigator {
             let mut best_move = Vector3::new(0.0, 0.0, 0.0);
             let mut lowest_cost = f64::MAX;
 
+            let world = entity.entity.world.read().await;
+
             for x in -1..=1 {
                 for z in -1..=1 {
                     let x = f64::from(x);
@@ -44,6 +46,13 @@ impl Navigator {
                         goal.current_progress.y,
                         goal.current_progress.z + z,
                     );
+                    let state = world
+                        .get_block_state(&BlockPos(potential_pos.to_i32()))
+                        .await;
+                    let shapes = state.get_block_collision_shapes();
+                    if !shapes.is_empty() {
+                        continue;
+                    }
 
                     let node = Node::new(potential_pos);
                     let cost = node.get_expense(goal.destination);
@@ -60,6 +69,7 @@ impl Navigator {
             if best_move.x == 0.0 && best_move.z == 0.0 {
                 return;
             }
+
             // Update current progress based on the best move
             goal.current_progress += best_move.normalize() * goal.speed;
 
