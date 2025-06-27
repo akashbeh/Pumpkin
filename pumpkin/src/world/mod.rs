@@ -525,7 +525,7 @@ impl World {
     /// Gets the y position of the first non air block from the top down
     pub async fn get_top_block(&self, position: Vector2<i32>) -> i32 {
         let generation_settings = self.get_generation_settings();
-        for y in (self.get_min_y()
+        for y in (i32::from(generation_settings.shape.min_y)
             ..=i32::from(generation_settings.shape.height))
             .rev()
         {

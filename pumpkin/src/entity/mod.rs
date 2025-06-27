@@ -58,6 +58,8 @@ pub mod tnt;
 
 mod combat;
 
+use item::ItemEntity;
+
 pub type EntityId = i32;
 
 #[async_trait]
@@ -105,6 +107,9 @@ pub trait EntityBase: Send + Sync {
     fn get_entity(&self) -> &Entity;
     fn get_living_entity(&self) -> Option<&LivingEntity>;
     fn get_player(&self) -> Option<&Player> {
+        None
+    }
+    fn get_item_entity(&self) -> Option<&ItemEntity> {
         None
     }
 
@@ -200,6 +205,8 @@ pub struct Entity {
     pub movement_multiplier: AtomicCell<Vector3<f64>>,
     /// Determines whether the entity's velocity needs to be sent
     pub velocity_dirty: AtomicBool,
+    /// Set when an Entity is to be removed but could still be referenced
+    pub removed: AtomicBool,
 }
 
 impl Entity {
@@ -260,6 +267,7 @@ impl Entity {
             no_clip: AtomicBool::new(false),
             movement_multiplier: AtomicCell::new(Vector3::default()),
             velocity_dirty: AtomicBool::new(true),
+            removed: AtomicBool::new(false),
         }
     }
 
@@ -544,6 +552,7 @@ impl Entity {
 
     /// Removes the `Entity` from their current `World`
     pub async fn remove(&self) {
+        self.removed.store(true, Ordering::Relaxed);
         self.world.read().await.remove_entity(self).await;
     }
 
@@ -1331,7 +1340,7 @@ impl EntityBase for Entity {
         let void_y = self.world.read().await.get_min_y() - 64;
         if self.block_pos.load().0.y < void_y {
             if let Some(living) = caller.get_living_entity() {
-                living.damage(4.0, DamageType::OUT_OF_WORLD).await;
+                let _ = living.damage(4.0, DamageType::OUT_OF_WORLD).await;
             } else {
                 self.remove().await;
             }

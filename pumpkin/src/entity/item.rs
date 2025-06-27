@@ -1,6 +1,6 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicU32, Ordering::Relaxed},
+    atomic::{AtomicBool, AtomicU32, Ordering::Relaxed},
 };
 
 use async_trait::async_trait;
@@ -20,6 +20,8 @@ use super::{Entity, EntityBase, living::LivingEntity, player::Player};
 pub struct ItemEntity {
     entity: Entity,
     item_age: AtomicU32,
+    never_despawn: AtomicBool,
+    never_pickup: AtomicBool,
     // These cannot be atomic values because we mutate their state based on what they are; we run
     // into the ABA problem
     item_stack: Mutex<ItemStack>,
@@ -39,6 +41,8 @@ impl ItemEntity {
         Self {
             entity,
             item_stack: Mutex::new(item_stack),
+            never_despawn: AtomicBool::new(false),
+            never_pickup: AtomicBool::new(false),
             item_age: AtomicU32::new(0),
             pickup_delay: Mutex::new(10), // Vanilla pickup delay is 10 ticks
         }
@@ -55,13 +59,92 @@ impl ItemEntity {
         Self {
             entity,
             item_stack: Mutex::new(item_stack),
+            never_despawn: AtomicBool::new(false),
+            never_pickup: AtomicBool::new(false),
             item_age: AtomicU32::new(0),
             pickup_delay: Mutex::new(pickup_delay), // Vanilla pickup delay is 10 ticks
         }
     }
 
+    async fn can_merge(&self) -> bool {
+        if self.entity.removed.load(Relaxed) || self.never_pickup.load(Relaxed) {
+            return false;
+        }
+        let item_stack = self.item_stack.lock().await;
+        item_stack.item_count < item_stack.get_max_stack_size()
+    }
+
     async fn try_merge(&self) {
-        // TODO
+        let bounding_box = self.entity.bounding_box.load().expand(0.5, 0.0, 0.5);
+        let world = self
+            .entity
+            .world
+            .read()
+            .await;
+        let entities = world
+            .entities
+            .read()
+            .await;
+        let items = entities
+            .values()
+            .filter_map(|entity: &Arc<dyn EntityBase>| entity.get_item_entity().take_if(|item| {
+                item.entity.entity_id == self.entity.entity_id
+                    || item.never_despawn.load(Relaxed)
+                    || !item.entity.bounding_box.load().intersects(&bounding_box)
+            }));
+        for item in items {
+            if !item.can_merge().await {
+            //if item.never_despawn.load(Relaxed) || !item.can_merge().await || !item.get_entity().bounding_box.load().intersects(&bounding_box) {
+                continue;
+            }
+            self.try_merge_with(item).await;
+            if self.entity.removed.load(Relaxed) {
+                break;
+            }
+        }
+    }
+
+    async fn try_merge_with(&self, other: &Self) {
+        // Check if merge is possible
+        let self_stack = self.item_stack.lock().await;
+        let other_stack = other.item_stack.lock().await;
+        if !self_stack.are_equal(&other_stack) || self_stack.item_count + other_stack.item_count > self_stack.get_max_stack_size() {
+            return;
+        }
+
+        let (target, mut stack1, source, mut stack2) = if other_stack.item_count < self_stack.item_count {
+            (self, self_stack, other, other_stack)
+        } else {
+            (other, other_stack, self, self_stack)
+        };
+
+        // Vanilla code adds a .min(64). Not needed with Vanilla item data
+        let max_size = stack1.get_max_stack_size();
+        let j = stack2.item_count.min(max_size - stack1.item_count);
+
+        stack1.increment(j);
+        stack2.decrement(j);
+        //*target.item_stack.lock().await = stack1;
+
+        let never_despawn = source.never_despawn.load(Relaxed);
+        target.never_despawn.store(never_despawn, Relaxed);
+        if !never_despawn {
+            let age = target.item_age.load(Relaxed).min(source.item_age.load(Relaxed));
+            target.item_age.store(age, Relaxed);
+        }
+        let never_pickup = source.never_pickup.load(Relaxed);
+        target.never_pickup.store(never_pickup, Relaxed);
+        if !never_pickup {
+            let mut target_delay = target.pickup_delay.lock().await;
+            let delay = (*target_delay).max(*source.pickup_delay.lock().await);
+            *target_delay = delay;
+        }
+
+        if stack2.item_count == 0 {
+            source.entity.remove().await;
+        } else {
+            //*source.item_stack.lock().await = stack2;
+        }
     }
 }
 
@@ -145,19 +228,21 @@ impl EntityBase for ItemEntity {
             entity.velocity.store(velo);
         }
 
-        let age = self.item_age.fetch_add(1, Relaxed);
-        if age >= 5999 {
-            entity.remove().await;
-            return;
-        }
+        if !self.never_despawn.load(Relaxed) {
+            let age = self.item_age.fetch_add(1, Relaxed) + 1;
+            if age >= 6000 {
+                entity.remove().await;
+                return;
+            }
 
-        let n = if entity.last_pos.load().sub(&entity.pos.load()).length_squared() != 0.0 {
-            2
-        } else {
-            40
-        };
-        if age % n == 0 {
-            self.try_merge().await;
+            let n = if entity.last_pos.load().sub(&entity.pos.load()).length_squared() == 0.0 {
+                40
+            } else {
+                2
+            };
+            if age % n == 0 && self.can_merge().await {
+                self.try_merge().await;
+            }
         }
 
         entity.update_fluid_state(&caller).await;
@@ -187,7 +272,7 @@ impl EntityBase for ItemEntity {
     }
 
     async fn on_player_collision(&self, player: &Arc<Player>) {
-        let can_pickup = {
+        let can_pickup = !self.never_pickup.load(Relaxed) && {
             let delay = self.pickup_delay.lock().await;
             *delay == 0
         };
@@ -230,6 +315,9 @@ impl EntityBase for ItemEntity {
 
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         None
+    }
+    fn get_item_entity(&self) -> Option<&ItemEntity> {
+        Some(self)
     }
 
     fn get_gravity(&self) -> f64 {
