@@ -622,7 +622,7 @@ impl LivingEntity {
                     .await
                     .get_block(&self.entity.block_pos.load())
                     .await;
-                if let Some(props) = block.properties(block.default_state_id) {
+                if let Some(props) = block.properties(block.default_state.id) {
                     if props.name() == "ScaffoldingLikeProperties" {
                         velo.y = 0.0;
                     }
@@ -719,7 +719,6 @@ impl EntityBase for LivingEntity {
     fn get_gravity(&self) -> f64 {
         GRAVITY
     }
-}
 
     async fn write_nbt(&self, nbt: &mut pumpkin_nbt::compound::NbtCompound) {
         self.entity.write_nbt(nbt).await;

@@ -936,26 +936,6 @@ pub(crate) fn build() -> TokenStream {
             Block::from_item_id(item_id)
         }
 
-        pub fn get_block_collision_shapes(state_id: u16) -> Option<Vec<CollisionShape>> {
-            let state = get_state_by_state_id(state_id)?;
-            let mut shapes: Vec<CollisionShape> = vec![];
-            for i in 0..state.collision_shapes.len() {
-                let shape = &COLLISION_SHAPES[state.collision_shapes[i] as usize];
-                shapes.push(*shape);
-            }
-            Some(shapes)
-        }
-
-        pub fn get_block_outline_shapes(state_id: u16) -> Option<Vec<CollisionShape>> {
-            let state = get_state_by_state_id(state_id)?;
-            let mut shapes: Vec<CollisionShape> = vec![];
-            for i in 0..state.outline_shapes.len() {
-                let shape = &COLLISION_SHAPES[state.outline_shapes[i] as usize];
-                shapes.push(*shape);
-            }
-            Some(shapes)
-        }
-
         pub fn blocks_movement(block_state: &BlockState) -> bool {
             if block_state.is_solid() {
                 if let Some(block) = get_block_by_state_id(block_state.id) {

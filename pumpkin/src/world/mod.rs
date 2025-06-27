@@ -10,7 +10,7 @@ pub mod time;
 
 use crate::{
     PLUGIN_MANAGER,
-    block::{self, registry::BlockRegistry},
+    block::{self, BlockEvent, loot::LootContextParameters, registry::BlockRegistry},
     command::client_suggestions,
     entity::{Entity, EntityBase, EntityId, item::ItemEntity, player::Player, r#type::from_type},
     error::PumpkinError,
@@ -21,26 +21,18 @@ use crate::{
     },
     server::Server,
 };
-use crate::{
-    block::{BlockEvent, loot::LootContextParameters},
-    entity::item::ItemEntity,
-};
 use async_trait::async_trait;
 use border::Worldborder;
 use bytes::{BufMut, Bytes};
 use explosion::Explosion;
 use pumpkin_config::BasicConfiguration;
-use pumpkin_data::BlockDirection;
-use pumpkin_data::entity::EffectType;
-use pumpkin_data::fluid::{Falling, FluidProperties};
 use pumpkin_data::{
     Block, BlockDirection, BlockState,
     block_properties::{
-        get_block_and_state_by_state_id, get_block_by_state_id, get_block_collision_shapes,
-        get_block_outline_shapes, get_state_by_state_id,
+        get_block_and_state_by_state_id, get_block_by_state_id, get_state_by_state_id,
     },
-    entity::{EntityStatus, EntityType},
-    fluid::{Fluid, FluidState},
+    entity::{EffectType, EntityStatus, EntityType},
+    fluid::{Falling, Fluid, FluidProperties, FluidState},
     particle::Particle,
     sound::{Sound, SoundCategory},
     world::{RAW, WorldEvent},
@@ -80,16 +72,16 @@ use pumpkin_util::{
     math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3},
 };
 use pumpkin_world::{
-    BlockStateId, GENERATION_SETTINGS, GeneratorSetting, biome, block::entities::BlockEntity,
-    chunk::io::Dirtiable, item::ItemStack, generation::settings::GenerationSettings,
-};
-use pumpkin_world::{chunk::ChunkData, world::BlockAccessor};
-use pumpkin_world::{chunk::TickPriority, level::Level};
-use pumpkin_world::{
+    BlockStateId, GENERATION_SETTINGS, GeneratorSetting, biome,
+    block::entities::BlockEntity,
+    chunk::{ChunkData, TickPriority, io::Dirtiable},
     entity::entity_data_flags::{DATA_PLAYER_MAIN_HAND, DATA_PLAYER_MODE_CUSTOMISATION},
-    world::GetBlockError,
+    generation::settings::GenerationSettings,
+    item::ItemStack,
+    level::Level,
+    world::{BlockAccessor, BlockFlags, GetBlockError},
+    world_info::LevelData,
 };
-use pumpkin_world::{item::ItemStack, world::BlockFlags, world_info::LevelData};
 use rand::{Rng, rng};
 use scoreboard::Scoreboard;
 use serde::Serialize;
@@ -2118,9 +2110,7 @@ impl World {
     ) -> (bool, Option<BlockDirection>) {
         let state = self.get_block_state(block_pos).await;
 
-        let Some(bounding_boxes) = state.get_block_outline_shapes() else {
-            return (false, None);
-        };
+        let bounding_boxes = state.get_block_outline_shapes();
 
         if bounding_boxes.is_empty() {
             return (true, None);
@@ -2314,10 +2304,7 @@ impl World {
             let fluid = Fluid::from_state_id(block_state_id).unwrap_or(Fluid::EMPTY);
             if fluid.id == Fluid::EMPTY.id {
                 let (block, block_state) = get_block_and_state_by_state_id(block_state_id)
-                    .unwrap_or((
-                        Block::AIR,
-                        get_state_by_state_id(Block::AIR.default_state_id).unwrap(),
-                    ));
+                    .unwrap_or((Block::AIR, Block::AIR.default_state));
                 let blocks_movement = block_state.is_solid()
                     && block != Block::COBWEB
                     && block != Block::BAMBOO_SAPLING;
@@ -2406,15 +2393,12 @@ impl World {
     where
         F: FnMut(&BoundingBox),
     {
-        let Some(shapes) = get_block_outline_shapes(state.id) else {
-            return false;
-        };
-        if shapes.is_empty() {
+        if state.outline_shapes.is_empty() {
             // Apparently we need this for air and moving pistons
             return true;
         }
         let mut inside = false;
-        'shapes: for shape in shapes {
+        'shapes: for shape in state.get_block_outline_shapes() {
             let outline_shape = shape.at_pos(pos);
             if outline_shape.intersects(bounding_box) {
                 inside = true;
@@ -2440,10 +2424,7 @@ impl World {
     {
         let mut collided = false;
         if !state.is_air() && state.is_solid() && !state.collision_shapes.is_empty() {
-            let Some(shapes) = get_block_collision_shapes(state.id) else {
-                return false;
-            };
-            for shape in shapes {
+            for shape in state.get_block_collision_shapes() {
                 let collision_shape = shape.at_pos(pos);
                 if collision_shape.intersects(bounding_box) {
                     collided = true;
@@ -2503,19 +2484,6 @@ impl World {
             }
         }
         true
-    }
-
-    pub async fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {
-        let height = EntityType::ITEM.dimension[1] / 2.0;
-        let pos = Vector3::new(
-            f64::from(pos.0.x) + 0.5 + rand::rng().random_range(-0.25..0.25),
-            f64::from(pos.0.y) + 0.5 + rand::rng().random_range(-0.25..0.25) - f64::from(height),
-            f64::from(pos.0.z) + 0.5 + rand::rng().random_range(-0.25..0.25),
-        );
-
-        let entity = self.create_entity(pos, EntityType::ITEM);
-        let item_entity = Arc::new(ItemEntity::new(entity, stack).await);
-        self.spawn_entity(item_entity as Arc<dyn EntityBase>).await;
     }
 }
 

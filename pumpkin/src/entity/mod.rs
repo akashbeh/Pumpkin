@@ -1389,7 +1389,6 @@ impl EntityBase for Entity {
     fn get_gravity(&self) -> f64 {
         0.0
     }
-}
 
     async fn write_nbt(&self, nbt: &mut pumpkin_nbt::compound::NbtCompound) {
         let position = self.pos.load();
