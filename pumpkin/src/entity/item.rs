@@ -76,25 +76,20 @@ impl ItemEntity {
 
     async fn try_merge(&self) {
         let bounding_box = self.entity.bounding_box.load().expand(0.5, 0.0, 0.5);
-        let world = self
-            .entity
-            .world
-            .read()
-            .await;
-        let entities = world
-            .entities
-            .read()
-            .await;
+        let world = self.entity.world.read().await;
+        let entities = world.entities.read().await;
         let items = entities
             .values()
-            .filter_map(|entity: &Arc<dyn EntityBase>| entity.get_item_entity().take_if(|item| {
-                item.entity.entity_id == self.entity.entity_id
-                    || item.never_despawn.load(Relaxed)
-                    || !item.entity.bounding_box.load().intersects(&bounding_box)
-            }));
+            .filter_map(|entity: &Arc<dyn EntityBase>| {
+                entity.get_item_entity().take_if(|item| {
+                    item.entity.entity_id == self.entity.entity_id
+                        || item.never_despawn.load(Relaxed)
+                        || !item.entity.bounding_box.load().intersects(&bounding_box)
+                })
+            });
+
         for item in items {
             if !item.can_merge().await {
-            //if item.never_despawn.load(Relaxed) || !item.can_merge().await || !item.get_entity().bounding_box.load().intersects(&bounding_box) {
                 continue;
             }
             self.try_merge_with(item).await;
@@ -108,15 +103,18 @@ impl ItemEntity {
         // Check if merge is possible
         let self_stack = self.item_stack.lock().await;
         let other_stack = other.item_stack.lock().await;
-        if !self_stack.are_equal(&other_stack) || self_stack.item_count + other_stack.item_count > self_stack.get_max_stack_size() {
+        if !self_stack.are_equal(&other_stack)
+            || self_stack.item_count + other_stack.item_count > self_stack.get_max_stack_size()
+        {
             return;
         }
 
-        let (target, mut stack1, source, mut stack2) = if other_stack.item_count < self_stack.item_count {
-            (self, self_stack, other, other_stack)
-        } else {
-            (other, other_stack, self, self_stack)
-        };
+        let (target, mut stack1, source, mut stack2) =
+            if other_stack.item_count < self_stack.item_count {
+                (self, self_stack, other, other_stack)
+            } else {
+                (other, other_stack, self, self_stack)
+            };
 
         // Vanilla code adds a .min(64). Not needed with Vanilla item data
         let max_size = stack1.get_max_stack_size();
@@ -129,7 +127,10 @@ impl ItemEntity {
         let never_despawn = source.never_despawn.load(Relaxed);
         target.never_despawn.store(never_despawn, Relaxed);
         if !never_despawn {
-            let age = target.item_age.load(Relaxed).min(source.item_age.load(Relaxed));
+            let age = target
+                .item_age
+                .load(Relaxed)
+                .min(source.item_age.load(Relaxed));
             target.item_age.store(age, Relaxed);
         }
         let never_pickup = source.never_pickup.load(Relaxed);
@@ -235,7 +236,13 @@ impl EntityBase for ItemEntity {
                 return;
             }
 
-            let n = if entity.last_pos.load().sub(&entity.pos.load()).length_squared() == 0.0 {
+            let n = if entity
+                .last_pos
+                .load()
+                .sub(&entity.pos.load())
+                .length_squared()
+                == 0.0
+            {
                 40
             } else {
                 2

@@ -76,7 +76,8 @@ use pumpkin_util::{
     math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3},
 };
 use pumpkin_world::{
-    BlockStateId, GENERATION_SETTINGS, GeneratorSetting, generation::settings::GenerationSettings, biome, block::entities::BlockEntity,
+    BlockStateId, GENERATION_SETTINGS, GeneratorSetting, biome, block::entities::BlockEntity,
+    generation::settings::GenerationSettings,
 };
 use pumpkin_world::{chunk::ChunkData, world::BlockAccessor};
 use pumpkin_world::{chunk::TickPriority, level::Level};
