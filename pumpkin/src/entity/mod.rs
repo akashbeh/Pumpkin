@@ -126,7 +126,7 @@ pub trait EntityBase: Send + Sync {
     fn get_player(&self) -> Option<&Player> {
         None
     }
-    fn get_item_entity(&self) -> Option<&ItemEntity> {
+    fn get_item_entity(self: Arc<Self>) -> Option<Arc<ItemEntity>> {
         None
     }
 

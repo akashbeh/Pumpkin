@@ -76,23 +76,29 @@ impl ItemEntity {
 
     async fn try_merge(&self) {
         let bounding_box = self.entity.bounding_box.load().expand(0.5, 0.0, 0.5);
-        let world = self.entity.world.read().await;
-        let entities = world.entities.read().await;
-        let items = entities
+        let items: Vec<_> = self
+            .entity
+            .world
+            .read()
+            .await
+            .entities
+            .read()
+            .await
             .values()
             .filter_map(|entity: &Arc<dyn EntityBase>| {
-                entity.get_item_entity().take_if(|item| {
+                entity.clone().get_item_entity().take_if(|item| {
                     item.entity.entity_id == self.entity.entity_id
                         || item.never_despawn.load(Relaxed)
                         || !item.entity.bounding_box.load().intersects(&bounding_box)
                 })
-            });
+            })
+            .collect();
 
         for item in items {
             if !item.can_merge().await {
                 continue;
             }
-            self.try_merge_with(item).await;
+            self.try_merge_with(&item).await;
             if self.entity.removed.load(Relaxed) {
                 break;
             }
@@ -323,7 +329,7 @@ impl EntityBase for ItemEntity {
     fn get_living_entity(&self) -> Option<&LivingEntity> {
         None
     }
-    fn get_item_entity(&self) -> Option<&ItemEntity> {
+    fn get_item_entity(self: Arc<Self>) -> Option<Arc<ItemEntity>> {
         Some(self)
     }
 
