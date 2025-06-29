@@ -15,11 +15,11 @@ use pumpkin_data::{
 };
 use pumpkin_nbt::{compound::NbtCompound, tag::NbtTag};
 use pumpkin_protocol::{
-    client::play::{
+    codec::var_int::VarInt,
+    java::client::play::{
         CEntityPositionSync, CEntityVelocity, CHeadRot, CSetEntityMetadata, CSpawnEntity,
         CUpdateEntityPos, CUpdateEntityPosRot, CUpdateEntityRot, MetaDataType, Metadata,
     },
-    codec::var_int::VarInt,
     ser::serializer::Serializer,
 };
 use pumpkin_registry::VanillaDimensionType;
