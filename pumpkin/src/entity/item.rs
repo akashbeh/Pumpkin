@@ -67,7 +67,7 @@ impl ItemEntity {
     }
 
     async fn can_merge(&self) -> bool {
-        if self.entity.removed.load(Relaxed) || self.never_pickup.load(Relaxed) {
+        if self.never_pickup.load(Relaxed) || self.entity.removed.load(Relaxed) {
             return false;
         }
         let item_stack = self.item_stack.lock().await;
@@ -86,21 +86,20 @@ impl ItemEntity {
             .await
             .values()
             .filter_map(|entity: &Arc<dyn EntityBase>| {
-                entity.clone().get_item_entity().take_if(|item| {
-                    item.entity.entity_id == self.entity.entity_id
-                        || item.never_despawn.load(Relaxed)
-                        || !item.entity.bounding_box.load().intersects(&bounding_box)
+                entity.clone().get_item_entity().filter(|item| {
+                    item.entity.entity_id != self.entity.entity_id
+                        && !item.never_despawn.load(Relaxed)
+                        && item.entity.bounding_box.load().intersects(&bounding_box)
                 })
             })
             .collect();
 
         for item in items {
-            if !item.can_merge().await {
-                continue;
-            }
-            self.try_merge_with(&item).await;
-            if self.entity.removed.load(Relaxed) {
-                break;
+            if item.can_merge().await {
+                self.try_merge_with(&item).await;
+                if self.entity.removed.load(Relaxed) {
+                    break;
+                }
             }
         }
     }
@@ -128,7 +127,10 @@ impl ItemEntity {
 
         stack1.increment(j);
         stack2.decrement(j);
-        //*target.item_stack.lock().await = stack1;
+        let empty1 = stack1.item_count == 0;
+        let empty2 = stack2.item_count == 0;
+        drop(stack1);
+        drop(stack2);
 
         let never_despawn = source.never_despawn.load(Relaxed);
         target.never_despawn.store(never_despawn, Relaxed);
@@ -147,10 +149,15 @@ impl ItemEntity {
             *target_delay = delay;
         }
 
-        if stack2.item_count == 0 {
+        if empty1 {
+            target.entity.remove().await;
+        } else {
+            target.init_data_tracker().await;
+        }
+        if empty2 {
             source.entity.remove().await;
         } else {
-            //*source.item_stack.lock().await = stack2;
+            source.init_data_tracker().await;
         }
     }
 }
