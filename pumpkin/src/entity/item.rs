@@ -1,6 +1,6 @@
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU32, Ordering::Relaxed},
+    atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use async_trait::async_trait;
@@ -67,7 +67,8 @@ impl ItemEntity {
     }
 
     async fn can_merge(&self) -> bool {
-        if self.never_pickup.load(Relaxed) || self.entity.removed.load(Relaxed) {
+        if self.never_pickup.load(Ordering::Relaxed) || self.entity.removed.load(Ordering::Relaxed)
+        {
             return false;
         }
         let item_stack = self.item_stack.lock().await;
@@ -88,7 +89,7 @@ impl ItemEntity {
             .filter_map(|entity: &Arc<dyn EntityBase>| {
                 entity.clone().get_item_entity().filter(|item| {
                     item.entity.entity_id != self.entity.entity_id
-                        && !item.never_despawn.load(Relaxed)
+                        && !item.never_despawn.load(Ordering::Relaxed)
                         && item.entity.bounding_box.load().intersects(&bounding_box)
                 })
             })
@@ -97,7 +98,7 @@ impl ItemEntity {
         for item in items {
             if item.can_merge().await {
                 self.try_merge_with(&item).await;
-                if self.entity.removed.load(Relaxed) {
+                if self.entity.removed.load(Ordering::SeqCst) {
                     break;
                 }
             }
@@ -132,17 +133,17 @@ impl ItemEntity {
         drop(stack1);
         drop(stack2);
 
-        let never_despawn = source.never_despawn.load(Relaxed);
-        target.never_despawn.store(never_despawn, Relaxed);
+        let never_despawn = source.never_despawn.load(Ordering::Relaxed);
+        target.never_despawn.store(never_despawn, Ordering::Relaxed);
         if !never_despawn {
             let age = target
                 .item_age
-                .load(Relaxed)
-                .min(source.item_age.load(Relaxed));
-            target.item_age.store(age, Relaxed);
+                .load(Ordering::Relaxed)
+                .min(source.item_age.load(Ordering::Relaxed));
+            target.item_age.store(age, Ordering::Relaxed);
         }
-        let never_pickup = source.never_pickup.load(Relaxed);
-        target.never_pickup.store(never_pickup, Relaxed);
+        let never_pickup = source.never_pickup.load(Ordering::Relaxed);
+        target.never_pickup.store(never_pickup, Ordering::Relaxed);
         if !never_pickup {
             let mut target_delay = target.pickup_delay.lock().await;
             let delay = (*target_delay).max(*source.pickup_delay.lock().await);
@@ -176,13 +177,13 @@ impl EntityBase for ItemEntity {
         // Gravity and buoyancy
         let original_velo = entity.velocity.load();
         let mut velo = original_velo;
-        if entity.touching_water.load(Relaxed) && entity.water_height.load() > 0.1 {
+        if entity.touching_water.load(Ordering::SeqCst) && entity.water_height.load() > 0.1 {
             velo.x *= 0.99;
             velo.z *= 0.99;
             if velo.y < 0.06 {
                 velo.y += 5.0e-4;
             }
-        } else if entity.touching_lava.load(Relaxed) && entity.lava_height.load() > 0.1 {
+        } else if entity.touching_lava.load(Ordering::SeqCst) && entity.lava_height.load() > 0.1 {
             velo.x *= 0.95;
             velo.z *= 0.95;
             if velo.y < 0.06 {
@@ -203,7 +204,7 @@ impl EntityBase for ItemEntity {
             .await
             .is_space_empty(bounding_box.expand(-1.0e-7, -1.0e-7, -1.0e-7))
             .await;
-        entity.no_clip.store(no_clip, Relaxed);
+        entity.no_clip.store(no_clip, Ordering::Relaxed);
         if no_clip {
             entity
                 .push_out_of_blocks(Vector3::new(
@@ -216,9 +217,9 @@ impl EntityBase for ItemEntity {
 
         let mut velo = entity.velocity.load(); // In case push_out_of_blocks modifies it
         let mut tick_move =
-            !entity.on_ground.load(Relaxed) || velo.horizontal_length_squared() > 1.0e-5;
+            !entity.on_ground.load(Ordering::SeqCst) || velo.horizontal_length_squared() > 1.0e-5;
         if !tick_move {
-            let Ok(item_age) = i32::try_from(self.item_age.load(Relaxed)) else {
+            let Ok(item_age) = i32::try_from(self.item_age.load(Ordering::Relaxed)) else {
                 entity.remove().await;
                 return;
             };
@@ -230,7 +231,7 @@ impl EntityBase for ItemEntity {
             entity.tick_block_collisions(&caller, server).await;
 
             let mut friction = 0.98;
-            let on_ground = entity.on_ground.load(Relaxed);
+            let on_ground = entity.on_ground.load(Ordering::SeqCst);
             if on_ground {
                 let block_affecting_velo = entity.get_block_with_y_offset(0.999_999).await.1;
                 friction *= f64::from(block_affecting_velo.slipperiness);
@@ -242,8 +243,8 @@ impl EntityBase for ItemEntity {
             entity.velocity.store(velo);
         }
 
-        if !self.never_despawn.load(Relaxed) {
-            let age = self.item_age.fetch_add(1, Relaxed) + 1;
+        if !self.never_despawn.load(Ordering::Relaxed) {
+            let age = self.item_age.fetch_add(1, Ordering::Relaxed) + 1;
             if age >= 6000 {
                 entity.remove().await;
                 return;
@@ -267,9 +268,9 @@ impl EntityBase for ItemEntity {
 
         entity.update_fluid_state(&caller).await;
 
-        let velocity_dirty = entity.velocity_dirty.swap(false, Relaxed)
-            || entity.touching_water.load(Relaxed)
-            || entity.touching_lava.load(Relaxed)
+        let velocity_dirty = entity.velocity_dirty.swap(false, Ordering::SeqCst)
+            || entity.touching_water.load(Ordering::SeqCst)
+            || entity.touching_lava.load(Ordering::SeqCst)
             //|| entity.velocity.load().sub(&original_velo).length_squared() > 0.01;
             || entity.velocity.load() != original_velo;
         if velocity_dirty {
@@ -293,7 +294,7 @@ impl EntityBase for ItemEntity {
     }
 
     async fn on_player_collision(&self, player: &Arc<Player>) {
-        let can_pickup = !self.never_pickup.load(Relaxed) && {
+        let can_pickup = !self.never_pickup.load(Ordering::Relaxed) && {
             let delay = self.pickup_delay.lock().await;
             *delay == 0
         };

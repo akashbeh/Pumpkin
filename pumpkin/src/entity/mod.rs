@@ -573,7 +573,7 @@ impl Entity {
 
     /// Removes the `Entity` from their current `World`
     pub async fn remove(&self) {
-        self.removed.store(true, Ordering::Relaxed);
+        self.removed.store(true, Ordering::SeqCst);
         self.world.read().await.remove_entity(self).await;
     }
 
@@ -601,8 +601,8 @@ impl Entity {
     }
 
     pub async fn set_sneaking(&self, sneaking: bool) {
-        assert!(self.sneaking.load(Relaxed) != sneaking);
-        self.sneaking.store(sneaking, Relaxed);
+        assert!(self.sneaking.load(Ordering::SeqCst) != sneaking);
+        self.sneaking.store(sneaking, Ordering::SeqCst);
         self.set_flag(Flag::Sneaking, sneaking).await;
         if sneaking {
             self.set_pose(EntityPose::Crouching).await;
@@ -739,8 +739,8 @@ impl Entity {
     }
 
     pub async fn set_sprinting(&self, sprinting: bool) {
-        assert!(self.sprinting.load(Relaxed) != sprinting);
-        self.sprinting.store(sprinting, Relaxed);
+        assert!(self.sprinting.load(Ordering::SeqCst) != sprinting);
+        self.sprinting.store(sprinting, Ordering::SeqCst);
         self.set_flag(Flag::Sprinting, sprinting).await;
     }
 
@@ -749,8 +749,8 @@ impl Entity {
     }
 
     pub async fn set_fall_flying(&self, fall_flying: bool) {
-        assert!(self.fall_flying.load(Relaxed) != fall_flying);
-        self.fall_flying.store(fall_flying, Relaxed);
+        assert!(self.fall_flying.load(Ordering::SeqCst) != fall_flying);
+        self.fall_flying.store(fall_flying, Ordering::SeqCst);
         self.set_flag(Flag::FallFlying, fall_flying).await;
     }
 
@@ -844,9 +844,9 @@ impl Entity {
 
     #[allow(clippy::float_cmp)]
     async fn adjust_movement_for_collisions(&self, movement: Vector3<f64>) -> Vector3<f64> {
-        self.on_ground.store(false, Ordering::Relaxed);
+        self.on_ground.store(false, Ordering::SeqCst);
         self.supporting_block_pos.store(None);
-        self.horizontal_collision.store(false, Ordering::Relaxed);
+        self.horizontal_collision.store(false, Ordering::SeqCst);
         if movement.length_squared() == 0.0 {
             return movement;
         }
@@ -893,7 +893,7 @@ impl Entity {
                 adjusted_movement.set_axis(Axis::Y, changed_component);
             }
             self.on_ground
-                .store(supporting_block_pos.is_some(), Ordering::Relaxed);
+                .store(supporting_block_pos.is_some(), Ordering::SeqCst);
             self.supporting_block_pos.store(supporting_block_pos);
         }
 
@@ -922,7 +922,7 @@ impl Entity {
             }
         }
         self.horizontal_collision
-            .store(horizontal_collision, Ordering::Relaxed);
+            .store(horizontal_collision, Ordering::SeqCst);
 
         adjusted_movement
     }
@@ -935,7 +935,7 @@ impl Entity {
         if strength <= 0.0 {
             return;
         }
-        self.velocity_dirty.store(true, Ordering::Relaxed);
+        self.velocity_dirty.store(true, Ordering::SeqCst);
         // This has some vanilla magic
         while x.mul_add(x, z * z) < 1.0E-5 {
             x = (rand::random::<f64>() - rand::random::<f64>()) * 0.01;
@@ -986,7 +986,7 @@ impl Entity {
             .await;
         // TODO: Add this to on_stepped_on
         /*
-        if self.on_ground.load(Ordering::Relaxed) {
+        if self.on_ground.load(Ordering::SeqCst) {
             let (_pos, block, state) = self.get_block_with_y_offset(0.2).await;
             if let Some(live) = living {
                 if block == Block::CAMPFIRE
@@ -1127,12 +1127,12 @@ impl Entity {
             if let Some(living) = caller.get_living_entity() {
                 living.fall_distance.store(0.0);
             }
-            if !self.touching_water.load(Ordering::Relaxed) {
+            if !self.touching_water.load(Ordering::SeqCst) {
                 // TODO: Spawn splash particles
             }
         }
         self.water_height.store(water_height);
-        self.touching_water.store(in_water, Ordering::Relaxed);
+        self.touching_water.store(in_water, Ordering::SeqCst);
 
         let lava_height = fluid_height[1];
         let in_lava = in_fluid[1];
@@ -1145,7 +1145,7 @@ impl Entity {
             }
         }
         self.lava_height.store(lava_height);
-        self.touching_lava.store(in_lava, Ordering::Relaxed);
+        self.touching_lava.store(in_lava, Ordering::SeqCst);
     }
 
     fn push_by_fluid(&self, speed: f64, mut push: Vector3<f64>, n: usize) {
@@ -1308,7 +1308,7 @@ impl Entity {
 
         if let Some(living) = caller.get_living_entity() {
             living
-                .update_fall_distance(final_move.y, self.on_ground.load(Ordering::Relaxed), false)
+                .update_fall_distance(final_move.y, self.on_ground.load(Ordering::SeqCst), false)
                 .await;
         }
     }

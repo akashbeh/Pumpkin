@@ -1,5 +1,8 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
+use std::sync::atomic::{
+    AtomicBool, AtomicU8,
+    Ordering::{Relaxed, SeqCst},
+};
 use std::{collections::HashMap, sync::atomic::AtomicI32};
 
 use super::EntityBase;
@@ -359,29 +362,29 @@ impl LivingEntity {
         self.movement_input.store(movement_input);
         // TODO: Tick AI
 
-        if self.jumping.load(Relaxed) && should_swim_in_fluids {
-            let in_lava = self.entity.touching_lava.load(Relaxed);
-            let in_water = self.entity.touching_water.load(Relaxed);
+        if self.jumping.load(SeqCst) && should_swim_in_fluids {
+            let in_lava = self.entity.touching_lava.load(SeqCst);
+            let in_water = self.entity.touching_water.load(SeqCst);
             let fluid_height = if in_lava {
                 self.entity.lava_height.load()
             } else {
                 self.entity.water_height.load()
             };
             let swim_height = self.get_swim_height();
-            let on_ground = self.entity.on_ground.load(Relaxed);
+            let on_ground = self.entity.on_ground.load(SeqCst);
             if (in_water || in_lava) && (!on_ground || fluid_height > swim_height) {
                 // Swim upward
                 let mut velo = self.entity.velocity.load();
                 velo.y += 0.04;
                 self.entity.velocity.store(velo);
             } else if (on_ground || in_water && fluid_height <= swim_height)
-                && self.jumping_cooldown.load(Relaxed) == 0
+                && self.jumping_cooldown.load(SeqCst) == 0
             {
                 self.jump().await;
-                self.jumping_cooldown.store(10, Relaxed);
+                self.jumping_cooldown.store(10, SeqCst);
             }
         } else {
-            self.jumping_cooldown.store(0, Relaxed);
+            self.jumping_cooldown.store(0, SeqCst);
         }
 
         if self.has_effect(EffectType::SlowFalling).await
@@ -390,9 +393,9 @@ impl LivingEntity {
             self.fall_distance.store(0.0);
         }
 
-        let touching_water = self.entity.touching_water.load(Relaxed);
+        let touching_water = self.entity.touching_water.load(SeqCst);
         // Strider is the only entity that has canWalkOnFluid = false
-        if (touching_water || self.entity.touching_lava.load(Relaxed))
+        if (touching_water || self.entity.touching_lava.load(SeqCst))
             && should_swim_in_fluids
             && self.entity.entity_type != EntityType::STRIDER
         {
@@ -410,7 +413,7 @@ impl LivingEntity {
 
     async fn travel_in_air(&self, caller: Arc<dyn EntityBase>) {
         // applyMovementInput
-        let (speed, friction) = if self.entity.on_ground.load(Relaxed) {
+        let (speed, friction) = if self.entity.on_ground.load(SeqCst) {
             // getVelocityAffectingPos
             let slipperiness = f64::from(
                 self.entity
@@ -439,7 +442,7 @@ impl LivingEntity {
 
         let mut velo = self.entity.velocity.load();
         // TODO: Add powdered snow
-        if (self.entity.horizontal_collision.load(Relaxed) || self.jumping.load(Relaxed))
+        if (self.entity.horizontal_collision.load(SeqCst) || self.jumping.load(SeqCst))
             && (self.climbing.load(Relaxed))
         {
             velo.y = 0.2;
@@ -478,7 +481,7 @@ impl LivingEntity {
             let mut speed = 0.02;
             let mut water_movement_efficiency = 0.0; // TODO: Entity attribute
             if water_movement_efficiency > 0.0 {
-                if !self.entity.on_ground.load(Relaxed) {
+                if !self.entity.on_ground.load(SeqCst) {
                     water_movement_efficiency *= 0.5;
                 }
                 friction += (0.546_000_06 - friction) * water_movement_efficiency;
@@ -493,7 +496,7 @@ impl LivingEntity {
             self.make_move(caller).await;
 
             let mut velo = self.entity.velocity.load();
-            if self.entity.horizontal_collision.load(Relaxed) && self.climbing.load(Relaxed) {
+            if self.entity.horizontal_collision.load(SeqCst) && self.climbing.load(Relaxed) {
                 velo.y = 0.2;
             }
             velo = velo.multiply(friction, 0.8, friction);
@@ -519,7 +522,7 @@ impl LivingEntity {
         }
         let mut velo = self.entity.velocity.load();
         velo.y += 0.6 - self.entity.pos.load().y + y0;
-        if self.entity.horizontal_collision.load(Relaxed)
+        if self.entity.horizontal_collision.load(SeqCst)
             && !self
                 .entity
                 .world
@@ -587,7 +590,7 @@ impl LivingEntity {
             }
         }
         self.climbing.store(false, Relaxed);
-        if self.entity.on_ground.load(Relaxed) {
+        if self.entity.on_ground.load(SeqCst) {
             self.climbing_pos.store(None);
         }
     }
@@ -657,7 +660,7 @@ impl LivingEntity {
             velo.y += yaw.cos() * 0.2;
         }
         self.entity.velocity.store(velo);
-        self.entity.velocity_dirty.store(true, Relaxed);
+        self.entity.velocity_dirty.store(true, SeqCst);
     }
 
     async fn get_jump_velocity(&self, mut strength: f64) -> f64 {
