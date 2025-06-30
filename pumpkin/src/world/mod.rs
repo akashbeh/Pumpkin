@@ -158,7 +158,8 @@ impl World {
         dimension_type: VanillaDimensionType,
         block_registry: Arc<BlockRegistry>,
     ) -> Self {
-        let mut world = Self {
+        let generation_settings = Self::generation_settings(&dimension_type);
+        Self {
             level: Arc::new(level),
             level_info: Arc::new(RwLock::new(level_info)),
             players: Arc::new(RwLock::new(HashMap::new())),
@@ -169,16 +170,14 @@ impl World {
             dimension_type,
             weather: Mutex::new(Weather::new()),
             block_registry,
-            sea_level: 0,
+            sea_level: generation_settings.sea_level,
             synced_block_event_queue: Mutex::new(Vec::new()),
             unsent_block_changes: Mutex::new(HashMap::new()),
-        };
-        world.sea_level = world.get_generation_settings().sea_level;
-        world
+        }
     }
 
-    fn get_generation_settings(&self) -> &GenerationSettings {
-        match self.dimension_type {
+    fn generation_settings(dimension_type: &VanillaDimensionType) -> &GenerationSettings {
+        match dimension_type {
             VanillaDimensionType::Overworld => GENERATION_SETTINGS
                 .get(&GeneratorSetting::Overworld)
                 .unwrap(),
@@ -190,6 +189,10 @@ impl World {
                 GENERATION_SETTINGS.get(&GeneratorSetting::Nether).unwrap()
             }
         }
+    }
+
+    fn get_generation_settings(&self) -> &GenerationSettings {
+        Self::generation_settings(&self.dimension_type)
     }
 
     pub async fn shutdown(&self) {
