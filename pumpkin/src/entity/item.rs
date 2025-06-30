@@ -270,7 +270,8 @@ impl EntityBase for ItemEntity {
         let velocity_dirty = entity.velocity_dirty.swap(false, Relaxed)
             || entity.touching_water.load(Relaxed)
             || entity.touching_lava.load(Relaxed)
-            || entity.velocity.load().sub(&original_velo).length_squared() > 0.01;
+            //|| entity.velocity.load().sub(&original_velo).length_squared() > 0.01;
+            || entity.velocity.load() != original_velo;
         if velocity_dirty {
             entity.send_pos_rot().await;
             entity.send_velocity().await;
